@@ -1,0 +1,128 @@
+.hotel-search-container {
+  background: #fff;
+  border-radius: 14px;
+  padding: 25px;
+  margin: 30px auto;
+  max-width: 1100px;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
+  font-family: 'Segoe UI', sans-serif;
+  margin-top: -50px;
+}
+
+.hotel-search-options {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.hotel-search-options button {
+  padding: 8px 16px;
+  border-radius: 20px;
+  border: 1px solid #ccc;
+  background: #f2f2f2;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.hotel-search-options button.active {
+  background: #0071c2;
+  color: #fff;
+  border: none;
+}
+
+.new-badge {
+  background-color: #ff4081;
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: 4px;
+}
+
+.hotel-note {
+  font-size: 14px;
+}
+
+.hotel-note a {
+  color: #0071c2;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+.hotel-search-fields {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+  margin-bottom: 20px;
+}
+
+.hotel-field {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+}
+
+.hotel-field label {
+  font-size: 14px;
+  margin-bottom: 5px;
+  font-weight: 600;
+}
+
+.hotel-field input {
+  padding: 10px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+  font-size: 15px;
+  background-color: #fff;
+  color: #000;
+}
+
+.hotel-field input::placeholder {
+  color: #888;
+  font-style: italic;
+}
+
+.hotel-trending {
+  margin: 20px 0;
+  font-size: 14px;
+}
+
+.trending-tags {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.trending-tags span {
+  background: #f2f2f2;
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+.search-btn-wrapper {
+  display: flex;
+  justify-content: center;
+}
+
+.search-btn {
+  background-color: #0071c2;
+  color: white;
+  font-size: 18px;
+  font-weight: bold;
+  padding: 12px 32px;
+  border: none;
+  border-radius: 30px;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.search-btn:hover {
+  background-color: #005fa3;
+}

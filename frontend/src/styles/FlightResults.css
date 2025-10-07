@@ -1,0 +1,239 @@
+/* Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', sans-serif;
+  background-color: #f2f6fa;
+  color: #333;
+  overflow-x: hidden;
+}
+
+/* Page wrapper */
+.flight-page {
+  /* no margin-top or padding-top here—handled by .app-content */
+  padding-top: 2450px;
+  padding-bottom: 40px;
+  min-height: 100vh;
+  box-sizing: border-box;
+  width: 100vw;
+  overflow-x: hidden;
+}
+
+/* the rest of your flight-card, etc… */
+
+
+
+/* Optional: center header text */
+.sort-header {
+  font-size: 24px;
+  font-weight: bold;
+  margin: 30px 60px;
+}
+
+/* No Results */
+.no-results {
+  text-align: center;
+  font-size: 18px;
+  color: #ffffff;
+  margin-top: 50px;
+}
+
+/* Flight Card Wrapper */
+.flight-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #fff;
+  margin: 20px 60px;
+  padding: 20px 30px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  transition: transform 0.2s ease;
+  width: calc(100vw - 120px); /* full width minus margin */
+}
+
+.flight-card:hover {
+  transform: translateY(-3px);
+}
+
+/* Airline Section */
+.airline-section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 20%;
+}
+
+.airline-logo-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.airline-logo {
+  width: 48px;
+  height: 48px;
+  object-fit: contain;
+  margin-right: 10px;
+}
+
+.airline-name {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.flight-number {
+  font-size: 13px;
+  color: #666;
+}
+
+/* Time Section */
+.time-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 48%;
+}
+
+.time-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.time {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.location {
+  font-size: 14px;
+  color: #777;
+}
+
+.duration-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.duration {
+  font-size: 14px;
+  color: #444;
+  margin-bottom: 5px;
+}
+
+.line {
+  width: 60px;
+  height: 2px;
+  background-color: #00b894;
+  margin: 4px 0;
+}
+
+.stop {
+  font-size: 12px;
+  color: #00b894;
+}
+
+/* Price Section */
+.price-section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: 20%;
+}
+
+.price {
+  font-size: 24px;
+  font-weight: bold;
+  color: #222;
+}
+
+.view-prices-btn {
+  background-color: #fff;
+  border: 2px solid #0078ff;
+  color: #0078ff;
+  padding: 8px 18px;
+  border-radius: 25px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 12px;
+  transition: all 0.2s ease;
+}
+
+.view-prices-btn:hover {
+  background-color: #0078ff;
+  color: #fff;
+}
+
+/* Travel Class Badge (Economy / Business / First) */
+.class-badge {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: bold;
+  border-radius: 12px;
+  margin-right: 8px;
+  margin-left: 20px;
+  text-transform: uppercase;
+  color: white;
+  background-color: #0078ff; /* Default for Economy */
+}
+
+.class-badge:contains("Business") {
+  background-color: #ff9800;
+}
+
+.class-badge:contains("First") {
+  background-color: #9c27b0;
+}
+
+/* Fare Type Badge (Student, Doctor, etc.) */
+.fare-badge {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: bold;
+  border-radius: 12px;
+  text-transform: uppercase;
+  color: white;
+  background-color: #ff5252; /* Default red */
+}
+
+/* Badges Section */
+.badges-section {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+/* Old Price (struck-through) */
+.original-price {
+  font-size: 14px;
+  color: #000;
+  position: relative;
+  margin-bottom: 4px;
+  display: inline-block;
+}
+
+.original-price::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 1px;
+  width: 100%;
+  background-color: red;
+  transform: translateY(-50%);
+}
+
+/* Final Discounted Price */
+.final-price {
+  font-size: 24px;
+  font-weight: bold;
+  color: #222;
+}
+

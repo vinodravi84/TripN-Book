@@ -1,0 +1,54 @@
+.sub-navbar-wrapper {
+  display: flex;
+  justify-content: center;
+  background-color: transparent;
+  margin-top: 10px;
+  padding: 20px 0;
+    z-index: 1; /* Ensure sub-navbar stays above other content */
+
+}
+
+.sub-navbar-card {
+  display: flex;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+  padding: 8px;
+  gap: 10px;
+    z-index: 2; /* Sub-navbar should be above the search box */
+
+}
+
+.subnav-tab {
+  background: transparent;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 14px;
+  padding: 12px 20px;
+  color: #555;
+  cursor: pointer;
+  border-radius: 10px;
+  transition: all 0.3s ease;
+  overflow: hidden;
+    position: relative; /* Needed for pseudo-element */
+
+}
+
+.subnav-tab .icon {
+  font-size: 20px;
+  margin-bottom: 5px;
+}
+
+.subnav-tab:hover {
+  background-color: #0071c2;
+  color: #fff; 
+}
+
+.subnav-tab.active {
+  color: #0071c2;
+  background-color: #eaf6ff;
+  font-weight: bold;
+  box-shadow: 0 4px 12px rgba(0, 113, 194, 0.2);
+}
