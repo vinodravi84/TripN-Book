@@ -1,12 +1,7 @@
-
-
-/* Container to avoid full centering of content */
+body {
+  margin: 0;
+  font-family: 'Poppins', sans-serif;
+}
 .app-content {
-    padding-top: 70px;
-    /* exactly your navbar height */
-  padding-left: 20px;
-  padding-right: 20px;
-  padding-bottom: 20px;
-
-  /* remove any width or centering rules here */
+  padding-top: 80px;
 }

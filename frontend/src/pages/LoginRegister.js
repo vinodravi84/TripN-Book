@@ -1,184 +1,103 @@
-// src/pages/LoginRegister.js
-
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { registerUser, loginUser } from '../services/api';
-import { useAuth } from '../context/AuthContext'; // Import useAuth hook
 import '../styles/LoginRegister.css';
+import { useAuth } from '../context/AuthContext';
+import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 const LoginRegister = () => {
-  const [isLogin, setIsLogin] = useState(true);
-  const [formData, setFormData] = useState({
-    name: '', email: '', password: ''
-  });
+  const [isRegister, setIsRegister] = useState(false);
+  const [formData, setFormData] = useState({ name: '', email: '', password: '' });
   const [message, setMessage] = useState('');
-  const [isError, setIsError] = useState(false);
-
+  const { login } = useAuth();
   const navigate = useNavigate();
-  const { login } = useAuth(); // Access login function from context
 
-  const toggleMode = () => {
-    setMessage('');
-    setIsError(false);
-    setIsLogin(!isLogin);
-    setFormData({ name: '', email: '', password: '' });
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleChange = e => {
-    setFormData(f => ({ ...f, [e.target.name]: e.target.value }));
-  };
-
-  const handleSubmit = async e => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    setMessage('');
-    setIsError(false);
-
     try {
-      if (isLogin) {
-        // ─── LOGIN ───────────────────────────────────────────
-        const response = await loginUser({
-          email: formData.email,
-          password: formData.password
-        });
-
-        console.log('Login response:', response);  // Log the entire response object
-
-        // Destructure token and user directly from response (not response.data)
-        const { token, user } = response; // No need to use response.data
-
-        if (!token || !user) {
-          throw new Error('Missing token or user data.');
-        }
-
-        // Update the context with the user data
-        
-        login({ ...user, token });
-
-        setMessage('Login successful!');
-        setIsError(false);
-
-        // Navigate to home page
+      const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
+      const res = await axios.post(endpoint, formData);
+      if (!isRegister) {
+        login(res.data.user);
+        localStorage.setItem('authToken', res.data.token);
         navigate('/');
       } else {
-        // ─── REGISTER ────────────────────────────────────────
-        await registerUser({
-          name: formData.name,
-          email: formData.email,
-          password: formData.password
-        });
-
         setMessage('Registration successful! Please log in.');
-        setIsError(false);
-
-        // Switch to login form after registration
-        setTimeout(() => {
-          setIsLogin(true);
-          setFormData({ name: '', email: '', password: '' });
-          setMessage('');
-        }, 1500);
+        setIsRegister(false);
       }
     } catch (err) {
-      console.error('Login error: ', err);  // Log detailed error information
-      if (err.response) {
-        console.error('Response error: ', err.response); // Log the full response error
-      }
-
-      // Show error message from the backend or a generic one
-      setMessage(err.response?.data?.message || 'Login failed: something went wrong.');
-      setIsError(true);
+      const errorMsg =
+        err.response?.data?.message || err.message || 'Something went wrong.';
+      setMessage(errorMsg);
     }
   };
 
   return (
-    <div className={`container ${isLogin ? '' : 'register-mode'}`}>
-      <div className="form-container">
-        {/* Panels */}
-        <div className="toggle-panel left-panel">
-          <div className="content">
-            <h2>New here?</h2>
-            <p>Create an account and start your journey with us!</p>
-            <button onClick={toggleMode}>Register</button>
-          </div>
-        </div>
-
-        <div className="toggle-panel right-panel">
-          <div className="content">
-            <h2>Already a member?</h2>
-            <p>Login to your account to continue booking!</p>
-            <button onClick={toggleMode}>Login</button>
-          </div>
-        </div>
-
-        {/* Forms */}
-        <div className="forms">
-          {/* Login Form */}
-          <form
-            name="login"
-            className={`form login-form ${isLogin ? 'active' : ''}`}
-            onSubmit={handleSubmit}
-          >
-            <h2>Login</h2>
+    <div className="pageWrapper">
+      <div className={`container ${isRegister ? 'registerMode' : ''}`}>
+        <div className="formContainer">
+          <form className="form" onSubmit={handleSubmit}>
+            <h2 className="formTitle">
+              {isRegister ? 'Create Account' : 'Welcome Back'}
+            </h2>
+            {isRegister && (
+              <input
+                type="text"
+                name="name"
+                placeholder="Full Name"
+                value={formData.name}
+                onChange={handleChange}
+                className="input"
+                required
+              />
+            )}
             <input
-              name="email"
               type="email"
+              name="email"
               placeholder="Email"
               value={formData.email}
               onChange={handleChange}
+              className="input"
               required
             />
             <input
-              name="password"
               type="password"
+              name="password"
               placeholder="Password"
               value={formData.password}
               onChange={handleChange}
+              className="input"
               required
             />
-            <button type="submit">Login</button>
+            <button type="submit" className="submitBtn">
+              {isRegister ? 'Register' : 'Login'}
+            </button>
+            {message && <p className="message">{message}</p>}
           </form>
+        </div>
 
-          {/* Register Form */}
-          <form
-            name="register"
-            className={`form register-form ${isLogin ? '' : 'active'}`}
-            onSubmit={handleSubmit}
-          >
-            <h2>Register</h2>
-            <input
-              name="name"
-              type="text"
-              placeholder="Name"
-              value={formData.name}
-              onChange={handleChange}
-              required
-            />
-            <input
-              name="email"
-              type="email"
-              placeholder="Email"
-              value={formData.email}
-              onChange={handleChange}
-              required
-            />
-            <input
-              name="password"
-              type="password"
-              placeholder="Password"
-              value={formData.password}
-              onChange={handleChange}
-              required
-            />
-            <button type="submit">Register</button>
-          </form>
+        <div className="togglePanel">
+          <div className="toggleContent">
+            <h2 className="toggleTitle">
+              {isRegister ? 'Already have an account?' : 'New here?'}
+            </h2>
+            <p className="toggleText">
+              {isRegister
+                ? 'Login to your account and continue booking.'
+                : 'Sign up now and start exploring amazing deals!'}
+            </p>
+            <button
+              className="toggleBtn"
+              onClick={() => setIsRegister(!isRegister)}
+            >
+              {isRegister ? 'Login' : 'Register'}
+            </button>
+          </div>
         </div>
       </div>
-
-      {/* Message at bottom of the box */}
-      {message && (
-        <div className={`message ${isError ? 'error' : 'success'}`}>
-          {message}
-        </div>
-      )}
     </div>
   );
 };

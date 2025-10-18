@@ -1,179 +1,197 @@
-/* Navbar styles */
-.navbar {
-  position: fixed;
-  top: 0;
-  left: 0;
+/* Login/Register Page Specific Styles */
+.pageWrapper {
   width: 100%;
-  background-color: rgba(0, 0, 0, 0.7);
-  color: white;
-  padding: 15px;
-  z-index: 10;
-}
-
-.navbar a {
-  color: white;
-  text-decoration: none;
-  margin: 0 20px;
-  font-size: 18px;
-}
-
-.navbar a:hover {
-  color: #00bcd4;
-}
-
-/* Body styles */
-body {
-  margin: 0;
-  font-family: 'Segoe UI', sans-serif;
-  background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
-  justify-content: center;
   align-items: center;
-  padding-top: 60px;
-}
-
-/* Container */
-.container {
-  position: relative;
-  width: 800px;
-  height: 500px;
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 0 30px rgba(0, 255, 255, 0.2);
-  border-radius: 20px;
-  overflow: hidden;
-  transition: 0.8s ease-in-out;
-  display: flex;
-  margin-top: 20px;
-}
-
-/* Message at bottom center */
-.message {
-  position: absolute;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 8px 16px;
-  border-radius: 4px;
-  font-weight: bold;
-  text-align: center;
-}
-.message.error {
-  background: rgba(255, 0, 0, 0.1);
-  color: #ff4444;
-}
-.message.success {
-  background: rgba(0, 0, 0, 0.05);
-  color: #000;
-}
-
-/* Form container */
-.form-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  overflow: hidden;
-}
-
-/* Forms wrapper (holds both login and register) */
-.forms {
-  display: flex;
-  width: 200%;
-  height: 100%;
-  transition: transform 0.8s ease-in-out;
-}
-
-/* Each form */
-.form {
-  width: 50%;
-  height: 100%;
-  padding: 50px;
-  opacity: 0;
-  transform: translateX(-100%);
-  transition: opacity 0.6s ease-in-out, transform 0.6s ease-in-out;
-  background: transparent;
-  pointer-events: none;
-  display: flex;
-  flex-direction: column;
   justify-content: center;
-}
-
-/* Active form */
-.form.active {
-  opacity: 1;
-  transform: translateX(0);
-  pointer-events: auto;
-  z-index: 10;
-}
-
-/* Input styles */
-input {
-  width: 100%;
-  padding: 12px;
-  margin: 12px 0;
-  border: none;
-  border-radius: 8px;
-  background-color: rgba(255, 255, 255, 0.1);
-  color: white;
-}
-
-/* Button styles */
-button {
-  padding: 12px 24px;
-  border: none;
-  background: #00bcd4;
-  color: white;
-  border-radius: 8px;
-  cursor: pointer;
-  margin-top: 10px;
-  transition: background 0.3s;
-}
-button:hover {
-  background: #0097a7;
-}
-
-/* Panel styles */
-.toggle-panel {
-  position: absolute;
-  top: 0;
-  width: 50%;
-  height: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  text-align: center;
-  z-index: 5;
-  transition: transform 0.6s ease-in-out;
-}
-
-.left-panel {
-  left: 0;
-  transform: translateX(100%);
-}
-
-.right-panel {
-  right: 0;
-  transform: translateX(100%);
-}
-
-/* Panel content */
-.content {
-  color: white;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   padding: 20px;
-}
-h2 {
-  margin-bottom: 10px;
+  box-sizing: border-box;
 }
 
-/* Register mode active — slide everything */
-.container.register-mode .forms {
-  transform: translateX(-50%);
+.container {
+  width: 100%;
+  max-width: 900px;
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 10px 50px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 500px;
+  transition: all 0.6s ease;
 }
-.container.register-mode .left-panel {
-  transform: translateX(-100%);
+
+.container.registerMode {
+  grid-template-columns: 1fr 1fr;
 }
-.container.register-mode .right-panel {
-  transform: translateX(0);
+
+.formContainer {
+  padding: 60px 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+}
+
+.form {
+  width: 100%;
+  max-width: 350px;
+}
+
+.formTitle {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #333333;
+  margin-bottom: 30px;
+  text-align: center;
+}
+
+.input {
+  width: 100%;
+  padding: 15px;
+  margin-bottom: 20px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 1rem;
+  transition: border-color 0.3s ease;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.submitBtn {
+  width: 100%;
+  padding: 15px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.submitBtn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+}
+
+.submitBtn:active {
+  transform: translateY(0);
+}
+
+.message {
+  margin-top: 15px;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  text-align: center;
+  background-color: #f0f0f0;
+  color: #333333;
+}
+
+.togglePanel {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: #ffffff;
+}
+
+.toggleContent {
+  text-align: center;
+  max-width: 300px;
+}
+
+.toggleTitle {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 15px;
+}
+
+.toggleText {
+  font-size: 1rem;
+  margin-bottom: 30px;
+  line-height: 1.6;
+  opacity: 0.95;
+}
+
+.toggleBtn {
+  padding: 12px 40px;
+  background: #ffffff;
+  color: #667eea;
+  border: none;
+  border-radius: 25px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.toggleBtn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(255, 255, 255, 0.3);
+}
+
+.toggleBtn:active {
+  transform: translateY(0);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .container {
+    grid-template-columns: 1fr;
+    max-width: 500px;
+  }
+
+  .togglePanel {
+    order: -1;
+    padding: 30px 20px;
+  }
+
+  .formContainer {
+    padding: 40px 30px;
+  }
+
+  .toggleTitle {
+    font-size: 1.5rem;
+  }
+
+  .toggleText {
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .pageWrapper {
+    padding: 10px;
+  }
+
+  .formContainer {
+    padding: 30px 20px;
+  }
+
+  .formTitle {
+    font-size: 1.5rem;
+  }
+
+  .input {
+    padding: 12px;
+    font-size: 0.9rem;
+  }
+
+  .submitBtn {
+    padding: 12px;
+  }
+
+  .togglePanel {
+    padding: 25px 15px;
+  }
 }
