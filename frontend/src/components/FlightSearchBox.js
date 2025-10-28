@@ -158,7 +158,7 @@ const FlightSearchBox = () => {
       </div>
 
       {/* From / To with Swap + Suggestions */}
-      <div className="search-fields">
+      <div className="search-fields from-to-fields">
         <div className="field">
           <label>From</label>
           <input
