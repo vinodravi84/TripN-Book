@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import '../styles/LoginRegister.css';
 import { useAuth } from '../context/AuthContext';
-import axios from 'axios';
+import { registerUser, loginUser } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 const LoginRegister = () => {
@@ -18,19 +18,18 @@ const LoginRegister = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const endpoint = isRegister ? '/api/auth/register' : '/api/auth/login';
-      const res = await axios.post(endpoint, formData);
-      if (!isRegister) {
-        login(res.data.user);
-        localStorage.setItem('authToken', res.data.token);
-        navigate('/');
-      } else {
-        setMessage('Registration successful! Please log in.');
+      if (isRegister) {
+        await registerUser(formData);
+        setMessage('✅ Registration successful! Please log in.');
         setIsRegister(false);
+      } else {
+        const res = await loginUser(formData);
+        login(res.user);
+        localStorage.setItem('authToken', res.token);
+        navigate('/');
       }
     } catch (err) {
-      const errorMsg =
-        err.response?.data?.message || err.message || 'Something went wrong.';
+      const errorMsg = err.response?.data?.message || 'Something went wrong.';
       setMessage(errorMsg);
     }
   };

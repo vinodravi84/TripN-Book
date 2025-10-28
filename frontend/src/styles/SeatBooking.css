@@ -1,94 +1,296 @@
-/* src/styles/SeatBooking.css */
+/* MakeMyTrip / Cleartrip style Seat Booking UI - Smaller Seats, No Scroll */
 
 .seat-booking-container {
-  text-align: center;
-  padding-top: 3000px;
-  padding-bottom: 60px;
-  background-color: #0f172a;
-  color: white;
   min-height: 100vh;
-  overflow-x: auto;
-  overflow-y: auto;
+  background: linear-gradient(180deg, #f3f7fc 0%, #e5f1fb 40%, #f3f7fc 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px;
+  font-family: 'Inter', sans-serif;
 }
 
+.seat-booking-container h2 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1e293b;
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+/* Aircraft background container */
 .aircraft-image-container {
   position: relative;
-  width: 3400px;
-  margin: 0 auto;
-  height: auto;
+  max-width: 2600px;
+  width: 270%;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: 0 4px 25px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  transition: box-shadow 0.3s ease;
+  min-height: 1000px;
+}
+
+.aircraft-image-container:hover {
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.12);
 }
 
 .aircraft-image {
   width: 100%;
-  height: auto;
-  display: block;
-  object-fit: contain;
+  height: 100%;
+  min-height: 950px;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0.95;
+  border-radius: 14px;
 }
 
+/* Seat grid overlay */
 .seat-grid-absolute {
   position: absolute;
-  top: 12%;
-  padding-top: 100px;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding-top: 15%;
+  padding-bottom: 12%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  justify-content: flex-start;
+  pointer-events: none;
+  overflow-y: scroll;
+  overflow-x: hidden;
+    transform: translateX(0.3%); /* shifts layout to the right */
+
 }
 
+.seat-grid-absolute > * {
+  pointer-events: auto;
+}
+
+/* Class Label */
 .class-label {
-  font-size: 20px;
-  margin: 40px 0 10px;
-  color: #38bdf8;
-}
-
-.seat-row {
-  display: flex;
-  justify-content: center;
-  gap: 6px;
-}
-
-.seat {
-  width: 36px;
-  height: 36px;
-  background-color: #3b82f6;
+  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  color: #fff;
+  padding: 4px 12px;
+  font-size: 10px;
+  font-weight: 600;
   border-radius: 6px;
+  text-transform: uppercase;
+  margin: 10px 0 6px;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+}
+
+/* Seat Row */
+.seat-row {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+/* Seat Styling - Much Smaller */
+.seat {
+  width: 30px;
+  height: 30px;
+  background: linear-gradient(145deg, #f9fafb, #e2e8f0);
+  border: 1.5px solid #94a3b8;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(148, 163, 184, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: #1e293b;
   cursor: pointer;
-  font-weight: bold;
-  font-size: 12px;
-  transition: all 0.2s ease-in-out;
+  transition: all 0.2s ease;
+  position: relative;
 }
 
+.seat:hover:not(.disabled):not(.selected) {
+  background: linear-gradient(145deg, #dbeafe, #93c5fd);
+  border-color: #2563eb;
+  transform: translateY(-2px) scale(1.08);
+  box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3);
+}
+
+/* Selected Seat */
 .seat.selected {
-  background-color: #10b981;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: #fff;
+  border-color: #2563eb;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.4);
+  transform: scale(1.1);
 }
 
+/* Disabled (other classes) */
 .seat.disabled {
-  background-color: #6b7280;
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: #94a3b8;
+  opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
 }
 
+/* Aisle gap */
 .seat-aisle-gap {
-  width: 48px;
+  width: 20px;
+  height: 24px;
+  flex-shrink: 0;
 }
 
+/* Confirm button */
 .confirm-btn {
   margin-top: 40px;
-  padding: 12px 40px;
-  background: #2563eb;
-  color: white;
+  padding: 14px 36px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
   border: none;
-  border-radius: 8px;
-  font-weight: bold;
+  border-radius: 12px;
   cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
+  transition: all 0.25s ease;
 }
 
+.confirm-btn:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 18px rgba(59, 130, 246, 0.4);
+  background: linear-gradient(135deg, #1d4ed8, #4338ca);
+}
+
+.confirm-btn:active {
+  transform: translateY(-1px);
+}
+
+/* Error */
 .seat-error {
-  color: red;
-  font-size: 20px;
+  padding: 30px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #dc2626;
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  border-radius: 12px;
   text-align: center;
-  margin-top: 60px;
+  max-width: 600px;
+  margin: 100px auto;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .aircraft-image-container {
+    max-width: 1000px;
+    min-height: 850px;
+  }
+
+  .aircraft-image {
+    min-height: 800px;
+  }
+
+  .seat {
+    width: 22px;
+    height: 22px;
+    font-size: 6px;
+  }
+
+  .seat-aisle-gap {
+    width: 18px;
+    height: 22px;
+  }
+}
+
+@media (max-width: 768px) {
+  .seat {
+    width: 20px;
+    height: 20px;
+    font-size: 6px;
+  }
+
+  .seat-aisle-gap {
+    width: 16px;
+    height: 20px;
+  }
+
+  .seat-row {
+    gap: 5px;
+    margin-bottom: 3px;
+  }
+
+  .confirm-btn {
+    font-size: 15px;
+    padding: 12px 28px;
+  }
+
+  .aircraft-image-container {
+    max-width: 700px;
+    padding: 16px;
+    min-height: 700px;
+  }
+
+  .aircraft-image {
+    min-height: 650px;
+  }
+
+  .seat-booking-container h2 {
+    font-size: 22px;
+  }
+
+  .seat-grid-absolute {
+    padding-top: 18%;
+  }
+
+  .class-label {
+    font-size: 9px;
+    padding: 3px 10px;
+    margin: 8px 0 5px;
+  }
+}
+
+@media (max-width: 480px) {
+  .seat {
+    width: 18px;
+    height: 18px;
+    font-size: 5px;
+  }
+
+  .seat-aisle-gap {
+    width: 14px;
+    height: 18px;
+  }
+
+  .seat-row {
+    gap: 4px;
+    margin-bottom: 3px;
+  }
+
+  .aircraft-image-container {
+    max-width: 100%;
+    padding: 12px;
+    min-height: 500px;
+  }
+
+  .aircraft-image {
+    min-height: 475px;
+  }
+
+  .class-label {
+    font-size: 8px;
+    padding: 3px 8px;
+    margin: 6px 0 4px;
+  }
+
+  .seat-grid-absolute {
+    padding-top: 20%;
+    padding-bottom: 10%;
+  }
 }
