@@ -7,9 +7,21 @@ exports.protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id).select('-password');
+    const user = await User.findById(decoded.userId).select('-password');
+
+    if (!user) return res.status(401).json({ error: 'User not found' });
+
+    req.user = user;
+    console.log(`💠 Auth middleware passed for user: ${user.email}`);
     next();
-  } catch {
+  } catch (err) {
+    console.error('❌ Auth middleware error:', err.message);
+
+    // Detect if token is expired
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired. Please log in again.' });
+    }
+
     res.status(401).json({ error: 'Invalid token' });
   }
 };

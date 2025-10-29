@@ -5,7 +5,7 @@ const User = require('../models/User');
 
 // Helper to sign a token
 const signToken = userId =>
-  jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
 exports.register = async (req, res) => {
   try {

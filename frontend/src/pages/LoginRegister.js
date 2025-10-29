@@ -24,8 +24,7 @@ const LoginRegister = () => {
         setIsRegister(false);
       } else {
         const res = await loginUser(formData);
-        login(res.user);
-        localStorage.setItem('authToken', res.token);
+        login(res.user, res.token); // Pass both user & token
         navigate('/');
       }
     } catch (err) {
@@ -39,9 +38,7 @@ const LoginRegister = () => {
       <div className={`container ${isRegister ? 'registerMode' : ''}`}>
         <div className="formContainer">
           <form className="form" onSubmit={handleSubmit}>
-            <h2 className="formTitle">
-              {isRegister ? 'Create Account' : 'Welcome Back'}
-            </h2>
+            <h2 className="formTitle">{isRegister ? 'Create Account' : 'Welcome Back'}</h2>
             {isRegister && (
               <input
                 type="text"
@@ -88,10 +85,7 @@ const LoginRegister = () => {
                 ? 'Login to your account and continue booking.'
                 : 'Sign up now and start exploring amazing deals!'}
             </p>
-            <button
-              className="toggleBtn"
-              onClick={() => setIsRegister(!isRegister)}
-            >
+            <button className="toggleBtn" onClick={() => setIsRegister(!isRegister)}>
               {isRegister ? 'Login' : 'Register'}
             </button>
           </div>
