@@ -2,6 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api, { setAuthToken } from '../services/api';
+import '../styles/MyTrips.css';
 
 const MyTrips = () => {
   const [bookings, setBookings] = useState([]); 

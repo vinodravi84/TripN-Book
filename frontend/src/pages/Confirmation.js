@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
-//import '../styles/Confirmation.css';
+import '../styles/Confirmation.css';
 
 const Confirmation = () => {
   const { state } = useLocation();
