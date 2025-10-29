@@ -5,34 +5,29 @@ import Navbar from './components/Navbar';
 import Home from './pages/Home';
 import LoginRegister from './pages/LoginRegister';
 import FlightResults from './pages/FlightResults';
-import './styles/style.css';  // global styles, including .app-content
-import FlightDetails   from './pages/FlightDetails';
+import './styles/style.css';
+import FlightDetails from './pages/FlightDetails';
 import PassengerForm from './pages/PassengerForm';
 import SeatBooking from './pages/SeatBooking';
 import Payment from './pages/Payment';
-
+import Confirmation from './pages/Confirmation';   // <--- add this
+import MyTrips from './pages/MyTrips';             // optional, add if present
 
 function App() {
   return (
     <>
-      {/* 1) Navbar sits above everything */}
       <Navbar />
-
-      {/* 2) This wrapper pushes ONLY your routed pages down */}
       <div className="app-content">
         <Routes>
-          
-          <Route path="/"       element={<Home />} />
+          <Route path="/" element={<Home />} />
           <Route path="/flights" element={<FlightResults />} />
-          <Route path="/login"  element={<LoginRegister />} />
+          <Route path="/login" element={<LoginRegister />} />
           <Route path="/flight-details" element={<FlightDetails />} />
           <Route path="/passenger-details" element={<PassengerForm />} />
           <Route path="/seat-booking" element={<SeatBooking />} />
           <Route path="/payment" element={<Payment />} />
-
-
-
-
+          <Route path="/confirmation" element={<Confirmation />} />   {/* <-- added */}
+          <Route path="/mytrips" element={<MyTrips />} />            {/* optional */}
         </Routes>
       </div>
     </>

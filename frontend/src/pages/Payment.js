@@ -1,18 +1,18 @@
+// src/pages/Payment.js
 import React from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import '../styles/Payment.css';
 
 const Payment = () => {
   const { state } = useLocation();
   const navigate = useNavigate();
-  const { user, token, logout } = useAuth(); // Get user, token, and logout from context
+  const { user, token, logout } = useAuth();
 
   console.log('💠 Current User:', user);
   console.log('💠 Auth Token:', token);
 
-  // Destructure booking data from route state
   const { flight, passengerData, travelClass, selectedSeats } = state || {};
 
   const handlePayment = async () => {
@@ -23,49 +23,48 @@ const Payment = () => {
     }
 
     try {
-      // Simulate payment success
-      alert('✅ Payment successful! Your booking is being saved...');
+      // Mock payment success (replace with real payment flow)
+      alert('✅ Payment successful! Saving your booking...');
 
-      // Send booking request to backend
-      const response = await axios.post(
-        'http://localhost:5000/api/bookings',
-        {
-          type: 'flight',
-          item: flight?._id,
-          passengerData,
-          selectedSeats,
-          travelClass,
-          totalAmount: flight?.price * (passengerData?.length || 1),
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+      const payload = {
+        type: 'flight',
+        item: flight?._id,
+        passengerData,
+        selectedSeats,
+        travelClass,
+        totalAmount: flight?.price * (passengerData?.length || 1),
+      };
 
-      if (response.status === 200 || response.status === 201) {
-        navigate('/confirmation', {
-          state: { flight, passengerData, travelClass, selectedSeats },
-        });
+      console.log('Posting booking payload:', payload);
+      const res = await api.post('/bookings', payload); // baseURL already has /api
+      console.log('Booking response:', res.data);
+
+      const booking = res.data.booking || res.data;
+      const bookingReference = booking?.bookingReference || booking?._id;
+
+      if (booking) {
+        // Navigate with full booking object
+        navigate('/confirmation', { state: { booking } });
+      } else if (bookingReference) {
+        // fallback to passing reference
+        navigate('/confirmation', { state: { bookingReference } });
       } else {
-        throw new Error('Failed to create booking.');
+        throw new Error('Unexpected booking response from server');
       }
     } catch (error) {
       console.error('❌ Payment Error:', error);
+      const msg = error?.message || error?.data?.message || error?.response?.data?.message;
+      const status = error?.response?.status;
 
-      // Handle expired or invalid token
-      if (
-        error.response?.data?.error?.toLowerCase().includes('expired') ||
-        error.response?.status === 401
-      ) {
+      const isAuthErr = status === 401 || (typeof msg === 'string' && msg.toLowerCase().includes('expired'));
+      if (isAuthErr) {
         alert('⏳ Session expired. Please log in again.');
-        logout(); // Clear user & token from context and localStorage
+        logout();
         navigate('/login');
-      } else {
-        alert('❌ Something went wrong while processing payment. Please try again.');
+        return;
       }
+
+      alert('❌ Something went wrong processing payment. Please try again.');
     }
   };
 
@@ -84,18 +83,14 @@ const Payment = () => {
       <h2>Payment Summary</h2>
 
       <div className="payment-details">
-        <p>
-          <strong>Flight:</strong> {flight.flightNumber} ({flight.from} → {flight.to})
-        </p>
+        <p><strong>Flight:</strong> {flight.flightNumber} ({flight.from} → {flight.to})</p>
         <p><strong>Class:</strong> {travelClass}</p>
         <p><strong>Seats:</strong> {selectedSeats.join(', ')}</p>
         <p><strong>Total Passengers:</strong> {passengerData.length}</p>
         <p><strong>Total Price:</strong> ₹{flight.price * passengerData.length}</p>
       </div>
 
-      <button className="pay-btn" onClick={handlePayment}>
-        💳 Pay Now
-      </button>
+      <button className="pay-btn" onClick={handlePayment}>💳 Pay Now</button>
     </div>
   );
 };

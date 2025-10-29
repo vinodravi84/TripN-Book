@@ -33,7 +33,7 @@ const Navbar = () => {
               className="navbar-btn"
               onClick={() => {
               if (user) {
-                navigate('/trips');
+                navigate('/mytrips');
               } else {
                 navigate('/login');
               }
