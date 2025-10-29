@@ -186,3 +186,30 @@ exports.createBooking = async (req, res) => {
     return res.status(500).json({ message: error.message || 'Server error creating booking' });
   }
 };
+exports.cancelBooking = async (req, res) => {
+  try {
+    const userId = req.user?._id || req.user?.id;
+    if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ message: 'Booking id is required' });
+
+    const booking = await Booking.findById(id);
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+
+    // Only allow owner or admin
+    // assume req.user.isAdmin exists for admin users; adjust to your auth setup
+    if (booking.user.toString() !== userId.toString() && !req.user?.isAdmin) {
+      return res.status(403).json({ message: 'Forbidden: you cannot cancel this booking' });
+    }
+
+    // If you'd prefer soft-delete, replace with an update: { status: 'Cancelled' } and keep a schema field.
+    await Booking.findByIdAndDelete(id);
+
+    // Optionally: return deleted booking id and a message
+    return res.status(200).json({ success: true, message: 'Booking cancelled', bookingId: id });
+  } catch (err) {
+    console.error('❌ Error cancelling booking:', err);
+    return res.status(500).json({ message: 'Server error cancelling booking' });
+  }
+};
