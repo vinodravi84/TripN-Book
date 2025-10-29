@@ -1,40 +1,186 @@
-/* MakeMyTrip / Cleartrip style Seat Booking UI - Smaller Seats, No Scroll */
+/* Premium Glassmorphism Seat Booking UI - Enhanced with Booked Seats */
 
 .seat-booking-container {
   min-height: 100vh;
-  background: linear-gradient(180deg, #f3f7fc 0%, #e5f1fb 40%, #f3f7fc 100%);
+  background: linear-gradient(180deg, #f0f9ff 0%, #e0f2fe 30%, #ddd6fe 60%, #fae8ff 100%);
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 40px 20px;
-  font-family: 'Inter', sans-serif;
+  padding: 60px 20px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  overflow-x: hidden;
 }
 
+/* Animated Background */
+.seat-booking-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    radial-gradient(circle at 15% 20%, rgba(168, 85, 247, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 85% 80%, rgba(236, 72, 153, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 50% 50%, rgba(139, 92, 246, 0.05) 0%, transparent 50%);
+  pointer-events: none;
+  animation: gradientShift 20s ease-in-out infinite;
+  z-index: 0;
+}
+
+@keyframes gradientShift {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.seat-booking-container::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: 
+    radial-gradient(2px 2px at 20% 30%, rgba(168, 85, 247, 0.12), transparent),
+    radial-gradient(2px 2px at 60% 70%, rgba(236, 72, 153, 0.12), transparent),
+    radial-gradient(1px 1px at 80% 10%, rgba(139, 92, 246, 0.1), transparent);
+  background-size: 200% 200%;
+  background-position: 0% 0%;
+  animation: floatingParticles 30s ease-in-out infinite;
+  pointer-events: none;
+  opacity: 0.4;
+  z-index: 0;
+}
+
+@keyframes floatingParticles {
+  0%, 100% { background-position: 0% 0%; }
+  50% { background-position: 100% 100%; }
+}
+
+/* Content Container */
+.seat-booking-container > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Title */
 .seat-booking-container h2 {
-  font-size: 28px;
-  font-weight: 700;
-  color: #1e293b;
+  font-size: 36px;
+  font-weight: 900;
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 50%, #8b5cf6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.5px;
   text-align: center;
-  margin-bottom: 28px;
+  margin-bottom: 32px;
+  filter: drop-shadow(0 4px 12px rgba(168, 85, 247, 0.3));
+  animation: titleFloat 3s ease-in-out infinite;
 }
 
-/* Aircraft background container */
+@keyframes titleFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+/* Info Text */
+.seat-booking-container > div > small {
+  display: block;
+  text-align: center;
+  font-size: 15px;
+  color: #64748b;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.75);
+  padding: 12px 24px;
+  border-radius: 12px;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.seat-booking-container > div > small strong {
+  color: #7c3aed;
+  font-weight: 800;
+}
+
+/* Legend */
+.seat-legend {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 16px 24px;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 16px;
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  margin-bottom: 24px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.legend-box {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1.5px solid;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.legend-box.available {
+  background: linear-gradient(145deg, #f9fafb, #e2e8f0);
+  border-color: #94a3b8;
+}
+
+.legend-box.selected {
+  background: linear-gradient(135deg, #a855f7, #ec4899);
+  border-color: #a855f7;
+}
+
+.legend-box.booked {
+  background: linear-gradient(145deg, #fca5a5, #ef4444);
+  border-color: #dc2626;
+  opacity: 0.7;
+}
+
+.legend-box.disabled {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  opacity: 0.5;
+}
+
+/* Aircraft Container */
 .aircraft-image-container {
   position: relative;
   max-width: 2600px;
   width: 270%;
-  background: rgba(255, 255, 255, 0.85);
-  border-radius: 20px;
-  padding: 24px;
-  box-shadow: 0 4px 25px rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1.5px solid rgba(168, 85, 247, 0.3);
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.12),
+    0 0 60px rgba(168, 85, 247, 0.15);
   overflow: hidden;
-  backdrop-filter: blur(10px);
-  transition: box-shadow 0.3s ease;
+  backdrop-filter: blur(16px);
+  transition: all 0.3s ease;
   min-height: 1000px;
 }
 
 .aircraft-image-container:hover {
-  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.12);
+  box-shadow: 
+    0 12px 40px rgba(0, 0, 0, 0.15),
+    0 0 80px rgba(168, 85, 247, 0.2);
+  border-color: rgba(168, 85, 247, 0.4);
 }
 
 .aircraft-image {
@@ -44,10 +190,10 @@
   object-fit: cover;
   object-position: center;
   opacity: 0.95;
-  border-radius: 14px;
+  border-radius: 16px;
 }
 
-/* Seat grid overlay */
+/* Seat Grid Overlay */
 .seat-grid-absolute {
   position: absolute;
   top: 0;
@@ -63,25 +209,77 @@
   pointer-events: none;
   overflow-y: scroll;
   overflow-x: hidden;
-    transform: translateX(0.3%); /* shifts layout to the right */
+  transform: translateX(0.3%);
+}
 
+.seat-grid-absolute::-webkit-scrollbar {
+  width: 8px;
+}
+
+.seat-grid-absolute::-webkit-scrollbar-track {
+  background: rgba(148, 163, 184, 0.1);
+  border-radius: 10px;
+}
+
+.seat-grid-absolute::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, #a855f7, #ec4899);
+  border-radius: 10px;
 }
 
 .seat-grid-absolute > * {
   pointer-events: auto;
 }
 
+/* Loading State */
+.booked-loading {
+  background: rgba(168, 85, 247, 0.1);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  color: #7c3aed;
+  padding: 12px 20px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 /* Class Label */
 .class-label {
-  background: linear-gradient(90deg, #2563eb, #4f46e5);
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
   color: #fff;
-  padding: 4px 12px;
-  font-size: 10px;
-  font-weight: 600;
-  border-radius: 6px;
+  padding: 6px 16px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 10px;
   text-transform: uppercase;
-  margin: 10px 0 6px;
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+  letter-spacing: 1px;
+  margin: 14px 0 10px;
+  box-shadow: 
+    0 4px 12px rgba(168, 85, 247, 0.3),
+    0 0 20px rgba(236, 72, 153, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.class-label::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+  animation: shimmer 3s infinite;
+}
+
+@keyframes shimmer {
+  0% { left: -100%; }
+  100% { left: 100%; }
 }
 
 /* Seat Row */
@@ -93,104 +291,201 @@
   margin-bottom: 14px;
 }
 
-/* Seat Styling - Much Smaller */
+/* Seat Styling */
 .seat {
   width: 30px;
   height: 30px;
   background: linear-gradient(145deg, #f9fafb, #e2e8f0);
   border: 1.5px solid #94a3b8;
-  border-radius: 4px;
-  box-shadow: 0 1px 3px rgba(148, 163, 184, 0.4);
+  border-radius: 5px;
+  box-shadow: 0 2px 4px rgba(148, 163, 184, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   color: #1e293b;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
+  user-select: none;
 }
 
-.seat:hover:not(.disabled):not(.selected) {
-  background: linear-gradient(145deg, #dbeafe, #93c5fd);
-  border-color: #2563eb;
-  transform: translateY(-2px) scale(1.08);
-  box-shadow: 0 4px 8px rgba(37, 99, 235, 0.3);
+/* Available Seat Hover */
+.seat:hover:not(.disabled):not(.selected):not(.booked) {
+  background: linear-gradient(145deg, #ddd6fe, #c4b5fd);
+  border-color: #a855f7;
+  transform: translateY(-3px) scale(1.12);
+  box-shadow: 
+    0 6px 12px rgba(168, 85, 247, 0.4),
+    0 0 20px rgba(168, 85, 247, 0.2);
+  z-index: 10;
 }
 
 /* Selected Seat */
 .seat.selected {
-  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
   color: #fff;
-  border-color: #2563eb;
-  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.4);
-  transform: scale(1.1);
+  border-color: #a855f7;
+  box-shadow: 
+    0 4px 12px rgba(168, 85, 247, 0.5),
+    0 0 24px rgba(236, 72, 153, 0.3);
+  transform: scale(1.15);
+  animation: seatPulse 2s ease-in-out infinite;
+  z-index: 10;
 }
 
-/* Disabled (other classes) */
+@keyframes seatPulse {
+  0%, 100% { box-shadow: 0 4px 12px rgba(168, 85, 247, 0.5), 0 0 24px rgba(236, 72, 153, 0.3); }
+  50% { box-shadow: 0 6px 16px rgba(168, 85, 247, 0.6), 0 0 32px rgba(236, 72, 153, 0.4); }
+}
+
+/* Booked Seat - NEW STYLING */
+.seat.booked {
+  background: linear-gradient(145deg, #fca5a5, #ef4444);
+  border-color: #dc2626;
+  color: #fff;
+  cursor: not-allowed;
+  opacity: 0.7;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);
+  position: relative;
+}
+
+.seat.booked::before {
+  content: '✕';
+  position: absolute;
+  font-size: 14px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.seat.booked:hover {
+  transform: none;
+  box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3);
+  cursor: not-allowed;
+}
+
+/* Disabled Seat (Other Classes) */
 .seat.disabled {
-  background: #f1f5f9;
+  background: linear-gradient(145deg, #f1f5f9, #e2e8f0);
   border-color: #cbd5e1;
   color: #94a3b8;
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
   transform: none;
+  box-shadow: none;
 }
 
-/* Aisle gap */
+.seat.disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* Aisle Gap */
 .seat-aisle-gap {
   width: 20px;
   height: 24px;
   flex-shrink: 0;
+  position: relative;
 }
 
-/* Confirm button */
+.seat-aisle-gap::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, 
+    transparent, 
+    rgba(168, 85, 247, 0.2), 
+    transparent);
+  transform: translateX(-50%);
+}
+
+/* Confirm Button */
 .confirm-btn {
-  margin-top: 40px;
-  padding: 14px 36px;
-  font-size: 16px;
-  font-weight: 700;
+  margin-top: 48px;
+  padding: 18px 48px;
+  font-size: 17px;
+  font-weight: 800;
   color: #fff;
-  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
   border: none;
-  border-radius: 12px;
+  border-radius: 16px;
   cursor: pointer;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);
-  transition: all 0.25s ease;
+  letter-spacing: 1px;
+  box-shadow: 
+    0 6px 20px rgba(168, 85, 247, 0.4),
+    0 0 40px rgba(236, 72, 153, 0.2);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.confirm-btn::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transform: translate(-50%, -50%);
+  transition: width 0.6s, height 0.6s;
+}
+
+.confirm-btn:hover::before {
+  width: 300px;
+  height: 300px;
 }
 
 .confirm-btn:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 6px 18px rgba(59, 130, 246, 0.4);
-  background: linear-gradient(135deg, #1d4ed8, #4338ca);
+  transform: translateY(-4px) scale(1.05);
+  box-shadow: 
+    0 10px 30px rgba(168, 85, 247, 0.5),
+    0 0 60px rgba(236, 72, 153, 0.3);
+  background: linear-gradient(135deg, #9333ea 0%, #db2777 100%);
 }
 
 .confirm-btn:active {
-  transform: translateY(-1px);
+  transform: translateY(-2px) scale(1.02);
 }
 
-/* Error */
+/* Error State */
 .seat-error {
-  padding: 30px;
+  padding: 40px;
   background: rgba(255, 255, 255, 0.9);
   color: #dc2626;
-  border: 1px solid rgba(220, 38, 38, 0.3);
-  border-radius: 12px;
+  border: 1.5px solid rgba(220, 38, 38, 0.4);
+  border-radius: 20px;
   text-align: center;
   max-width: 600px;
   margin: 100px auto;
-  font-weight: 600;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  font-weight: 700;
+  font-size: 16px;
+  box-shadow: 
+    0 8px 32px rgba(220, 38, 38, 0.15),
+    0 0 40px rgba(220, 38, 38, 0.1);
+  backdrop-filter: blur(12px);
+  animation: shake 0.5s ease-in-out;
 }
 
-/* Responsive */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-10px); }
+  75% { transform: translateX(10px); }
+}
+
+/* Responsive Design */
 @media (max-width: 1024px) {
   .aircraft-image-container {
     max-width: 1000px;
     min-height: 850px;
+    padding: 24px;
   }
 
   .aircraft-image {
@@ -200,20 +495,42 @@
   .seat {
     width: 22px;
     height: 22px;
-    font-size: 6px;
+    font-size: 8px;
+  }
+
+  .seat.booked::before {
+    font-size: 12px;
   }
 
   .seat-aisle-gap {
     width: 18px;
     height: 22px;
   }
+
+  .class-label {
+    font-size: 10px;
+    padding: 5px 14px;
+  }
 }
 
 @media (max-width: 768px) {
+  .seat-booking-container {
+    padding: 40px 16px;
+  }
+
+  .seat-booking-container h2 {
+    font-size: 28px;
+    margin-bottom: 24px;
+  }
+
   .seat {
     width: 20px;
     height: 20px;
-    font-size: 6px;
+    font-size: 7px;
+  }
+
+  .seat.booked::before {
+    font-size: 10px;
   }
 
   .seat-aisle-gap {
@@ -223,26 +540,23 @@
 
   .seat-row {
     gap: 5px;
-    margin-bottom: 3px;
+    margin-bottom: 12px;
   }
 
   .confirm-btn {
     font-size: 15px;
-    padding: 12px 28px;
+    padding: 16px 40px;
+    margin-top: 40px;
   }
 
   .aircraft-image-container {
     max-width: 700px;
-    padding: 16px;
+    padding: 20px;
     min-height: 700px;
   }
 
   .aircraft-image {
     min-height: 650px;
-  }
-
-  .seat-booking-container h2 {
-    font-size: 22px;
   }
 
   .seat-grid-absolute {
@@ -251,16 +565,38 @@
 
   .class-label {
     font-size: 9px;
-    padding: 3px 10px;
-    margin: 8px 0 5px;
+    padding: 4px 12px;
+    margin: 10px 0 8px;
+  }
+
+  .legend-item {
+    font-size: 12px;
+  }
+
+  .legend-box {
+    width: 20px;
+    height: 20px;
   }
 }
 
 @media (max-width: 480px) {
+  .seat-booking-container {
+    padding: 30px 12px;
+  }
+
+  .seat-booking-container h2 {
+    font-size: 22px;
+    margin-bottom: 20px;
+  }
+
   .seat {
     width: 18px;
     height: 18px;
-    font-size: 5px;
+    font-size: 6px;
+  }
+
+  .seat.booked::before {
+    font-size: 9px;
   }
 
   .seat-aisle-gap {
@@ -270,12 +606,12 @@
 
   .seat-row {
     gap: 4px;
-    margin-bottom: 3px;
+    margin-bottom: 10px;
   }
 
   .aircraft-image-container {
     max-width: 100%;
-    padding: 12px;
+    padding: 16px;
     min-height: 500px;
   }
 
@@ -285,12 +621,27 @@
 
   .class-label {
     font-size: 8px;
-    padding: 3px 8px;
-    margin: 6px 0 4px;
+    padding: 4px 10px;
+    margin: 8px 0 6px;
   }
 
   .seat-grid-absolute {
     padding-top: 20%;
     padding-bottom: 10%;
+  }
+
+  .confirm-btn {
+    font-size: 14px;
+    padding: 14px 32px;
+    margin-top: 32px;
+  }
+
+  .legend-item {
+    font-size: 11px;
+  }
+
+  .legend-box {
+    width: 18px;
+    height: 18px;
   }
 }
