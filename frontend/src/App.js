@@ -12,6 +12,8 @@ import SeatBooking from './pages/SeatBooking';
 import Payment from './pages/Payment';
 import Confirmation from './pages/Confirmation';   // <--- add this
 import MyTrips from './pages/MyTrips';             // optional, add if present
+import AIAssistant from "./pages/AIAssistant";
+
 
 function App() {
   return (
@@ -28,6 +30,8 @@ function App() {
           <Route path="/payment" element={<Payment />} />
           <Route path="/confirmation" element={<Confirmation />} />   {/* <-- added */}
           <Route path="/mytrips" element={<MyTrips />} />            {/* optional */}
+          <Route path="/assistant" element={<AIAssistant />} />
+
         </Routes>
       </div>
     </>
