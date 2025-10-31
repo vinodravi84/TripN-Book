@@ -30,6 +30,15 @@ const AIAssistant = () => {
   };
   useEffect(scrollToBottom, [messages]);
 
+  const isBookingDraftReadyForPayment = (draft = {}) => {
+    // consider booking ready for payment if any explicit flag present
+    if (!draft) return false;
+    if (draft.readyForPayment) return true;
+    if (draft.bookingId) return true;
+    if (draft.stage && (draft.stage === "payment" || draft.stage === "awaiting_payment")) return true;
+    return false;
+  };
+
   const sendMessage = async () => {
     if (!input.trim()) return;
 
@@ -39,6 +48,7 @@ const AIAssistant = () => {
     setLoading(true);
 
     try {
+      // Use absolute URL if backend runs on another port; adjust if you proxy.
       const res = await axios.post("http://localhost:5000/api/assistant/chat", {
         message: input,
         sessionId,
@@ -47,49 +57,51 @@ const AIAssistant = () => {
       const payload = res.data || {};
       const aiReply = payload.reply || "Sorry, I couldn’t process that.";
 
-      // store bookingDraft if present
+      // Persist bookingDraft ALWAYS for continuity, but DO NOT treat it as a navigation trigger.
       if (payload.bookingDraft) {
         localStorage.setItem("bookingDraft", JSON.stringify(payload.bookingDraft));
       }
 
-      // navigateTo: prefer react-router navigate with state
+      // 1) Explicit navigation from server (preferred)
       if (payload.navigateTo) {
         const nav = payload.navigateTo;
+        // store draft as fallback
+        if (payload.bookingDraft) localStorage.setItem("bookingDraft", JSON.stringify(payload.bookingDraft));
+        setMessages(prev => [...prev, { sender: "bot", text: aiReply }]);
         if (nav.state) {
-          // try navigate with state
-          try {
-            // Save bookingDraft as fallback for pages that expect it
-            if (payload.bookingDraft) localStorage.setItem("bookingDraft", JSON.stringify(payload.bookingDraft));
-            setMessages(prev => [...prev, { sender: "bot", text: aiReply }]);
-            return navigate(nav.path, { state: nav.state });
-          } catch (err) {
-            // fallback
-            window.localStorage.setItem("bookingDraft", JSON.stringify(payload.bookingDraft || {}));
-            setMessages(prev => [...prev, { sender: "bot", text: aiReply }]);
-            window.location.href = nav.path;
-            return;
-          }
+          // navigate with react-router state where possible
+          return navigate(nav.path, { state: nav.state });
         } else {
-          // simple redirect
-          if (payload.bookingDraft) localStorage.setItem("bookingDraft", JSON.stringify(payload.bookingDraft));
-          setMessages(prev => [...prev, { sender: "bot", text: aiReply }]);
+          // fallback: direct redirect
           window.location.href = nav.path;
           return;
         }
       }
 
-      // old-style redirectTo
-      if (payload.redirectTo === "/payment" || payload.bookingDraft) {
-        if (payload.bookingDraft) localStorage.setItem("bookingDraft", JSON.stringify(payload.bookingDraft));
-        setMessages((prev) => [...prev, { sender: "bot", text: aiReply }]);
-        // small delay for UX
-        setTimeout(() => {
-          navigate(payload.redirectTo || "/payment");
-        }, 700);
+      // 2) Old-style redirectTo — be explicit and only accept /payment
+      if (payload.redirectTo) {
+        if (payload.redirectTo === "/payment") {
+          if (payload.bookingDraft) localStorage.setItem("bookingDraft", JSON.stringify(payload.bookingDraft));
+          setMessages(prev => [...prev, { sender: "bot", text: aiReply }]);
+          setTimeout(() => navigate("/payment", { state: { booking: payload.bookingDraft } }), 700);
+          return;
+        } else {
+          // other redirects: show message and don't auto-navigate
+          setMessages(prev => [...prev, { sender: "bot", text: aiReply }]);
+          return;
+        }
+      }
+
+      // 3) bookingDraft present but NOT ready for payment: DO NOT redirect.
+      if (payload.bookingDraft && isBookingDraftReadyForPayment(payload.bookingDraft)) {
+        // navigate to payment if server indicates readiness
+        localStorage.setItem("bookingDraft", JSON.stringify(payload.bookingDraft));
+        setMessages(prev => [...prev, { sender: "bot", text: aiReply }]);
+        setTimeout(() => navigate("/payment", { state: { booking: payload.bookingDraft } }), 700);
         return;
       }
 
-      // normal reply
+      // 4) otherwise just show assistant message (no redirect)
       setMessages((prev) => [...prev, { sender: "bot", text: aiReply }]);
     } catch (err) {
       console.error("Error chatting with assistant:", err);

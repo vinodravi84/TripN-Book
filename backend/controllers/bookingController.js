@@ -1,4 +1,4 @@
-// controllers/bookingController.js
+// backend/controllers/bookingController.js
 const Booking = require('../models/Booking');
 const Flight = require('../models/Flight');
 const Hotel = require('../models/Hotel');
@@ -9,7 +9,7 @@ const flatten = (arr) => [].concat(...arr);
 
 /**
  * GET /api/bookings
- * (unchanged) - lists user's bookings
+ * Lists user's bookings
  */
 exports.getBookings = async (req, res) => {
   try {
@@ -73,9 +73,8 @@ exports.getBookings = async (req, res) => {
 };
 
 /**
- * NEW: GET /api/bookings/booked-seats/:flightId
+ * GET /api/bookings/booked-seats/:flightId
  * Returns unique booked seat IDs for a flight.
- * Accepts optional query param `travelClass` to filter seats for a specific class.
  */
 exports.getBookedSeats = async (req, res) => {
   try {
@@ -84,13 +83,11 @@ exports.getBookedSeats = async (req, res) => {
 
     if (!flightId) return res.status(400).json({ message: 'Flight ID required' });
 
-    // Find bookings for this flight (optionally filter by travelClass)
     const query = { item: flightId, type: 'flight' };
     if (travelClass) query.travelClass = travelClass;
 
     const bookings = await Booking.find(query).select('selectedSeats').lean();
 
-    // Flatten and dedupe
     const bookedSeats = Array.from(new Set(flatten(bookings.map(b => b.selectedSeats || []))));
 
     return res.status(200).json({ success: true, bookedSeats });
@@ -115,6 +112,35 @@ exports.createBooking = async (req, res) => {
     if (!userId) return res.status(401).json({ message: 'Unauthorized' });
     if (!type || !item) return res.status(400).json({ message: 'Missing type or item' });
 
+    // --- sanitize & normalize passengerData to match schema enums ---
+    const normalizeType = (t) => {
+      if (!t) return 'Adult';
+      const s = String(t).toLowerCase();
+      if (s.startsWith('inf')) return 'Infant';
+      if (s.startsWith('child') || s === 'kid' || s === 'children') return 'Child';
+      return 'Adult';
+    };
+    const normalizeGender = (g) => {
+      if (!g) return 'Other';
+      const s = String(g).toLowerCase();
+      if (s.startsWith('m')) return 'Male';
+      if (s.startsWith('f')) return 'Female';
+      return 'Other';
+    };
+
+    // Validate required passenger fields and build sanitized array
+    const sanitizedPassengers = (passengerData || []).map((p, idx) => {
+      if (!p || !p.fullName || typeof p.age === 'undefined' || p.age === null || !p.gender) {
+        throw { status: 400, message: `Passenger #${idx + 1} missing required fields (fullName, age, gender).` };
+      }
+      return {
+        fullName: String(p.fullName).trim(),
+        age: Number(p.age),
+        gender: normalizeGender(p.gender),
+        type: normalizeType(p.type),
+      };
+    });
+
     let flightDoc;
     if (type === 'flight') {
       flightDoc = await Flight.findById(item).lean();
@@ -124,38 +150,35 @@ exports.createBooking = async (req, res) => {
         return res.status(404).json({ message: 'Flight not found' });
       }
 
-      // Gather existing seats for this flight (and optionally same travelClass if desired)
+      const computedTotal = (typeof totalAmount === 'number' && !isNaN(totalAmount))
+        ? totalAmount
+        : ((flightDoc.price || 0) * Math.max(1, sanitizedPassengers.length));
+
       const existingBookings = await Booking.find({ item }).select('selectedSeats').lean();
       const existingSeats = flatten(existingBookings.map(b => b.selectedSeats || []));
 
-      // detect conflicts
-      const conflicts = selectedSeats.filter(s => existingSeats.includes(s));
+      const conflicts = (selectedSeats || []).filter(s => existingSeats.includes(s));
       if (conflicts.length) {
         await session.abortTransaction();
         session.endSession();
         return res.status(409).json({ message: `Seats already booked: ${conflicts.join(', ')}`, conflicts });
       }
-    }
 
-    // create booking
-    const createdBooking = await Booking.create([{
-      user: userId,
-      type,
-      item,
-      passengerData,
-      selectedSeats,
-      travelClass,
-      totalAmount,
-      paymentStatus: 'Paid',
-    }], { session });
+      const createdBooking = await Booking.create([{
+        user: userId,
+        type,
+        item,
+        passengerData: sanitizedPassengers,
+        selectedSeats,
+        travelClass,
+        totalAmount: computedTotal,
+        paymentStatus: 'Paid',
+      }], { session });
 
-    await session.commitTransaction();
-    session.endSession();
+      await session.commitTransaction();
+      session.endSession();
 
-    // Populate returned booking for response (same as before)
-    let booking = await Booking.findById(createdBooking[0]._id).lean();
-
-    if (type === 'flight') {
+      let booking = await Booking.findById(createdBooking[0]._id).lean();
       const populatedItem = await Flight.findById(booking.item)
         .select('flightNumber airline from to departureTime arrivalTime price aircraft.make aircraft.model')
         .lean();
@@ -170,7 +193,30 @@ exports.createBooking = async (req, res) => {
         price: populatedItem.price,
         aircraft: populatedItem.aircraft || {},
       } : null;
-    } else if (type === 'hotel') {
+
+      return res.status(201).json({ success: true, booking });
+    }
+
+    // Hotel or other booking types
+    const computedTotal = (typeof totalAmount === 'number' && !isNaN(totalAmount)) ? totalAmount : 0;
+
+    const createdBooking = await Booking.create([{
+      user: userId,
+      type,
+      item,
+      passengerData: sanitizedPassengers,
+      selectedSeats,
+      travelClass,
+      totalAmount: computedTotal,
+      paymentStatus: 'Paid',
+    }], { session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    let booking = await Booking.findById(createdBooking[0]._id).lean();
+
+    if (type === 'hotel') {
       const populatedItem = await Hotel.findById(booking.item)
         .select('name location checkIn checkOut price')
         .lean();
@@ -181,11 +227,16 @@ exports.createBooking = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+
+    if (error && error.status && error.message) {
+      return res.status(error.status).json({ message: error.message });
+    }
+
     console.error('❌ Error creating booking:', error);
-    // If you want to expose the message, ensure it doesn't leak sensitive info
     return res.status(500).json({ message: error.message || 'Server error creating booking' });
   }
 };
+
 exports.cancelBooking = async (req, res) => {
   try {
     const userId = req.user?._id || req.user?.id;
@@ -197,16 +248,12 @@ exports.cancelBooking = async (req, res) => {
     const booking = await Booking.findById(id);
     if (!booking) return res.status(404).json({ message: 'Booking not found' });
 
-    // Only allow owner or admin
-    // assume req.user.isAdmin exists for admin users; adjust to your auth setup
     if (booking.user.toString() !== userId.toString() && !req.user?.isAdmin) {
       return res.status(403).json({ message: 'Forbidden: you cannot cancel this booking' });
     }
 
-    // If you'd prefer soft-delete, replace with an update: { status: 'Cancelled' } and keep a schema field.
     await Booking.findByIdAndDelete(id);
 
-    // Optionally: return deleted booking id and a message
     return res.status(200).json({ success: true, message: 'Booking cancelled', bookingId: id });
   } catch (err) {
     console.error('❌ Error cancelling booking:', err);

@@ -1,667 +1,910 @@
 // backend/controllers/assistantController.js
-const axios = require("axios");
-const dotenv = require("dotenv");
-dotenv.config();
+// TripNBook AI Assistant — conversational booking agent (FIXED: booking user/type validation + guest flow)
 
-// In-memory session store.
+const axios = require('axios');
+const chrono = require('chrono-node');
+const Fuse = require('fuse.js');
+const path = require('path');
+const fs = require('fs');
+const Flight = require('../models/Flight');
+const Booking = require('../models/Booking');
+
+const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const MODEL_NAME = process.env.OPENROUTER_MODEL || 'gpt-4o-mini';
+
+// optional server-side aircraft layouts
+let aircraftLayouts = {};
+try {
+  const layoutsPath = path.join(__dirname, '..', 'aircraft_layouts.json');
+  if (fs.existsSync(layoutsPath)) aircraftLayouts = JSON.parse(fs.readFileSync(layoutsPath, 'utf8'));
+} catch (e) {
+  console.warn('aircraft_layouts.json not loaded:', e.message);
+}
+
+// load cities map
+const citiesFile = path.join(__dirname, '..', 'cities_75.json');
+let citiesMap = {};
+try { citiesMap = JSON.parse(fs.readFileSync(citiesFile, 'utf8')); } catch (e) { citiesMap = {}; }
+
+const cityList = Object.keys(citiesMap).map(c => ({ city: c, iata: citiesMap[c] })); 
+const fuse = new Fuse(cityList, { keys: ['city'], threshold: 0.35 });
+
+// in-memory sessions
 const sessions = new Map();
 
-// System prompt template (injected per request with today's date)
-const SYSTEM_PROMPT_TEMPLATE = `
-You are TripNBook AI — a friendly, helpful travel assistant that runs inside the TripNBook web app.
-Purpose: help users find and book flights and hotels using TripNBook backend APIs.
-Rules:
-- Ask clarifying questions when required (date, origin, destination, passengers).
-- Follow booking flow: selection -> collect passenger details -> seat preference -> redirect to payment -> confirm booking.
-- Use short, polite responses.
-- Today's date is: {{TODAY_DATE}}.
-`;
-
-// Helper: ensure session exists
-function getSession(sessionId) {
-  if (!sessionId) return null;
-  if (!sessions.has(sessionId)) {
-    sessions.set(sessionId, { conversationHistory: [], bookingContext: null, lastSearchResults: null });
-  }
-  return sessions.get(sessionId);
-}
-
-// Helper: clear session
-function clearSession(sessionId) {
-  if (!sessionId) return;
-  sessions.set(sessionId, { conversationHistory: [], bookingContext: null, lastSearchResults: null });
-}
-
-// Simple intent detection fallback
-function detectSimpleIntent(text) {
-  const t = (text || "").toLowerCase();
-  if (t.includes("flight") || t.match(/\b(from|to)\b/)) return "flight_search";
-  if (t.includes("book") || t.includes("booking") || t.includes("confirm")) return "booking";
-  if (t.includes("hotel")) return "hotel_search";
-  return "chat";
-}
-
-// Use OpenRouter or configured LLM
-async function callLLM(messages) {
-  const url = "https://openrouter.ai/api/v1/chat/completions";
-  return axios.post(
-    url,
-    {
-      model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3-8b-instruct",
-      messages,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+// ----------------- Helpers -----------------
+function parseDateFromText(text) {
+  try {
+    const r = chrono.parse(text || '');
+    if (r && r.length > 0 && r[0].start) {
+      const d = r[0].start.date();
+      return d.toISOString().slice(0, 10);
     }
-  );
+  } catch (e) {}
+  return null;
 }
 
-// Format flight list to friendly string
-function formatFlightsList(flights) {
-  if (!Array.isArray(flights) || flights.length === 0) return "No flights found.";
-  return flights
+function resolveCity(name) {
+  if (!name) return null;
+  const trimmed = name.trim();
+  if (/^[A-Za-z]{3}$/.test(trimmed)) return { city: trimmed.toUpperCase(), iata: trimmed.toUpperCase() };
+  const exact = Object.keys(citiesMap).find(k => k.toLowerCase() === trimmed.toLowerCase());
+  if (exact) return { city: exact, iata: citiesMap[exact] };
+  const r = fuse.search(trimmed);
+  if (r.length > 0) return { city: r[0].item.city, iata: r[0].item.iata };
+  return null;
+}
+
+function formatFlightsShort(list) {
+  if (!Array.isArray(list) || list.length === 0) return 'No flights found.';
+  return list
     .slice(0, 8)
-    .map(
-      (f, i) =>
-        `${i + 1}. ${f.airline || f.airlineName || "Unknown"} ${f.flightNumber || ""} — depart ${f.departureTime || f.depart || "N/A"} → arrive ${f.arrivalTime || f.arrival || "N/A"} — ₹${f.price || f.fare || "N/A"} (id: ${f.id || f.flightId || f._id || "n/a"})`
-    )
-    .join("\n");
+    .map((f, i) => `${i + 1}. ✈️ ${f.airline || 'Unknown'} ${f.flightNumber || ''}\n   ${f.departureTime || 'N/A'} → ${f.arrivalTime || 'N/A'}\n   ₹${f.price || 'N/A'} — id:${f._id || 'n/a'}`)
+    .join('\n\n');
 }
 
-/**
- * Helper: Robust passenger parser — best-effort extraction from free text.
- * Supports patterns like:
- * "2 passengers Vinod age 21 male Kaviya age 21 female"
- * "Vinod (21, male) and Kaviya (21, female)"
- * returns array of { name, age|null, gender|null }
- */
-function parsePassengersFromText(text) {
-  if (!text || typeof text !== "string") return [];
-
-  const normalized = text.replace(/\s+/g, " ").trim();
-
-  // cluster pattern
-  const clusters = [];
-  const pattern = /([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\s*(?:[,()]|)?\s*(?:age\s*(\d{1,3}))?\s*(male|female|other)?/gi;
-  let m;
-  while ((m = pattern.exec(normalized))) {
-    const name = (m[1] || "").trim();
-    const age = m[2] ? parseInt(m[2], 10) : null;
-    const gender = m[3] ? m[3].toLowerCase() : null;
-    if (name) clusters.push({ name, age, gender });
-  }
-  if (clusters.length) return clusters;
-
-  // fallback: split and parse each fragment
-  const parts = normalized.split(/,|\band\b/i).map(s => s.trim()).filter(Boolean);
-  for (const p of parts) {
-    const pm = p.match(/^([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)\s*(?:age\s*(\d{1,3}))?\s*(male|female|other)?/i);
-    if (pm) {
-      clusters.push({
-        name: (pm[1] || "").trim(),
-        age: pm[2] ? parseInt(pm[2], 10) : null,
-        gender: pm[3] ? pm[3].toLowerCase() : null,
-      });
-    }
-  }
-  return clusters;
+function titleCase(s) { 
+  if (!s) return s; 
+  return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' '); 
 }
 
-/**
- * Parse relative date phrases like "today", "tomorrow", "this friday", "next sunday",
- * or absolute dates like "2025-11-03" or "03-11-2025" (DD-MM-YYYY).
- * Returns YYYY-MM-DD string or empty string if unknown.
- */
-function parseRelativeDate(phrase) {
-  if (!phrase || typeof phrase !== "string") return "";
-  const t = phrase.trim().toLowerCase();
-
-  const now = new Date();
-  const weekdays = {
-    sunday: 0,
-    monday: 1,
-    tuesday: 2,
-    wednesday: 3,
-    thursday: 4,
-    friday: 5,
-    saturday: 6,
-  };
-
-  // absolute ISO
-  const iso = t.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-
-  // DD-MM-YYYY or DD/MM/YYYY
-  const dmy = t.match(/\b(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})\b/);
-  if (dmy) {
-    const dd = dmy[1].padStart(2, "0");
-    const mm = dmy[2].padStart(2, "0");
-    const yyyy = dmy[3];
-    return `${yyyy}-${mm}-${dd}`;
-  }
-
-  if (t.includes("today")) {
-    return dateToISO(now);
-  }
-  if (t.includes("tomorrow")) {
-    const d = new Date(now);
-    d.setDate(d.getDate() + 1);
-    return dateToISO(d);
-  }
-  // "this friday" or "next friday"
-  const m = t.match(/\b(this|next)?\s*(sun(day)?|mon(day)?|tue(sday)?|wed(nesday)?|thu(rsday)?|fri(day)?|sat(urday)?)\b/);
-  if (m) {
-    const when = m[1] || ""; // this | next | undefined
-    const dayWord = m[2];
-    const dayKey = Object.keys(weekdays).find(k => k.startsWith(dayWord.slice(0,3)));
-    const target = weekdays[dayKey];
-    if (target !== undefined) {
-      const d = new Date(now);
-      const diff = (target + 7 - d.getDay()) % 7;
-      let add = diff;
-      if (when === "next") add = diff === 0 ? 7 : diff + 7;
-      // if 'this' and diff === 0, it's today
-      d.setDate(d.getDate() + add);
-      return dateToISO(d);
-    }
-  }
-
-  return "";
-}
-
-function dateToISO(d) {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-// Build extraction prompt (strict JSON) for LLM
-function makeExtractionPrompt(systemPrompt, message) {
-  return `${systemPrompt}
-User message:
-"${message}"
-
-Task (strict JSON):
-- If user asks to search flights, return EXACTLY:
-  {"action":"flight_search","origin":"IATA_OR_CITY|CITYNAME|\"\"","destination":"IATA_OR_CITY|CITYNAME|\"\"","date":"YYYY-MM-DD|\"\"","time_pref":"morning|afternoon|evening|any","travelClass":"economy|business|first|any","passengers":<number>}
-- If user wants to start booking a specific flight, return:
-  {"action":"start_booking","flightId":"ID_OR_FLIGHTNUMBER|\"\"","seat_pref":"window|aisle|middle|any"}
-- If user supplied passenger details, return:
-  {"action":"passengers","passengers":[{"name":"Full Name","age":21,"gender":"male|female|other"}...]}
-- If it's casual chat, return:
-  {"action":"chat","reply":"friendly reply text"}
-
-Rules:
-- Use YYYY-MM-DD for date when known; otherwise use empty string "".
-- Return JSON only (no commentary). All fields should be present (use empty string or null if unknown).
-`;
-}
-
-// Main chat handler
-const chatWithAssistant = async (req, res) => {
-  const { message, sessionId: givenSessionId } = req.body;
-  const sessionId = givenSessionId || "anon";
-  if (!message) return res.status(400).json({ error: "Message is required" });
-
-  const session = getSession(sessionId);
-
-  const mlower = message.toLowerCase();
-  if (mlower.includes("start over") || mlower.includes("new chat") || mlower === "clear") {
-    clearSession(sessionId);
-    return res.status(200).json({ reply: "Okay — starting a fresh conversation. How can I help you today?" });
-  }
-
-  if (!session.bookingContext) {
-    session.bookingContext = {
-      step: null,
+function ensureSession(sessionId) {
+  const sid = sessionId || `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  if (!sessions.has(sid)) {
+    sessions.set(sid, {
+      id: sid,
+      history: [],
+      context: {},
+      lastSearchResults: [],
       selectedFlight: null,
-      passengers: [],
-      seatPreference: null,
-      price: null,
-      travelClass: null,
-      bookingDraft: null,
-      selectedSeats: [],
-    };
+      bookingDraft: null
+    });
   }
+  return sessions.get(sid);
+}
 
-  // push user message
-  session.conversationHistory.push({ role: "user", content: message });
+// ---------- Time / flight helpers ----------
+function parseHourFromString(text) {
+  if (!text) return null;
+  const m = String(text).match(/\b([0-2]?\d)(?::([0-5]\d))?\s*(am|pm)?\b/i);
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  const minute = m[2] ? parseInt(m[2], 10) : 0;
+  const ampm = m[3] ? m[3].toLowerCase() : null;
+  if (ampm === 'pm' && hour < 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  if (hour >= 0 && hour <= 23) return { hour, minute };
+  return null;
+}
 
+function flightDepartureHour(flight) {
+  if (!flight || !flight.departureTime) return null;
+  const t = String(flight.departureTime).trim();
+  const hhmm = t.match(/^([0-1]?\d|2[0-3]):([0-5]\d)/);
+  if (hhmm) return parseInt(hhmm[1], 10);
+  const ampm = t.match(/([0-1]?\d)(?::([0-5]\d))?\s*(am|pm)/i);
+  if (ampm) {
+    let h = parseInt(ampm[1], 10);
+    const ampmStr = ampm[3].toLowerCase();
+    if (ampmStr === 'pm' && h < 12) h += 12;
+    if (ampmStr === 'am' && h === 12) h = 0;
+    return h;
+  }
+  const num = t.match(/^([0-2]?\d)/);
+  if (num) {
+    const h = parseInt(num[1], 10);
+    if (!isNaN(h) && h >= 0 && h < 24) return h;
+  }
+  return null;
+}
+
+function applyFilters(results, text) {
+  if (!Array.isArray(results)) return [];
+  let filtered = [...results];
+  const lower = (text || '').toLowerCase();
+  const timeWordsPresent = /\b(morning|evening|after|before|am|pm|:\d{2})\b/.test(lower);
+  if (timeWordsPresent) filtered = filtered.filter(f => flightDepartureHour(f) !== null);
+  if (/\b(cheap|cheapest|lowest|budget|sort by price)\b/.test(lower)) filtered.sort((a, b) => (a.price || 0) - (b.price || 0));
+  const timeTokenMatch = lower.match(/\b([0-2]?\d(?::[0-5]\d)?\s*(?:am|pm))\b/i);
+  const hasEvening = /\bevening\b/.test(lower);
+  const hasMorning = /\bmorning\b/.test(lower);
+  const afterMatch = lower.match(/\bafter\s+([0-2]?\d(?::[0-5]\d)?\s*(?:am|pm)?)\b/);
+  if (afterMatch) {
+    const parsed = parseHourFromString(afterMatch[1]);
+    if (parsed) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh >= parsed.hour; });
+  }
+  const beforeMatch = lower.match(/\bbefore\s+([0-2]?\d(?::[0-5]\d)?\s*(?:am|pm)?)\b/);
+  if (beforeMatch) {
+    const parsed = parseHourFromString(beforeMatch[1]);
+    if (parsed) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh <= parsed.hour; });
+  }
+  if (timeTokenMatch && (hasEvening || hasMorning)) {
+    const parsed = parseHourFromString(timeTokenMatch[1]);
+    if (parsed) {
+      if (hasEvening) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh >= Math.max(parsed.hour, 17); });
+      else if (hasMorning) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh < Math.min(parsed.hour + 1, 12); });
+    }
+  } else if (hasEvening) {
+    filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh >= 17; });
+  } else if (hasMorning) {
+    filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh < 12; });
+  }
+  if (timeTokenMatch && !afterMatch && !beforeMatch && !hasEvening && !hasMorning) {
+    const parsed = parseHourFromString(timeTokenMatch[1]);
+    if (parsed) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh >= parsed.hour; });
+  }
+  return filtered;
+}
+
+// ---------- Passenger extraction helpers ----------
+function extractPassengerCount(text) {
+  if (!text) return null;
+  const m = text.match(/\b(\d{1,2})\b/);
+  if (m) return parseInt(m[1], 10);
+  const wordsToNum = { one:1,two:2,three:3,four:4,five:5 };
+  const w = text.toLowerCase().match(/\b(one|two|three|four|five)\b/);
+  if (w) return wordsToNum[w[1]];
+  return null;
+}
+
+function extractName(text) {
+  if (!text) return null;
+  const bracket = text.match(/([A-Za-z][A-Za-z'\-\.]+\s+[A-Za-z'\-\.]+)\s*\(/);
+  if (bracket) return titleCase(bracket[1].trim());
+  const tokens = text.trim().split(/\s+/);
+  if (tokens.length >= 2 && /^[A-Za-z][a-z]/.test(tokens[0]) && /^[A-Za-z][a-z]/.test(tokens[1])) {
+    return titleCase(`${tokens[0]} ${tokens[1]}`);
+  }
+  const single = tokens[0].replace(/[^A-Za-z'\-]/g, '');
+  return single ? titleCase(single) : null;
+}
+function extractAge(text) {
+  if (!text) return null;
+  const m = text.match(/\b([1-9][0-9]?)\b/);
+  if (m) return Number(m[1]);
+  return null;
+}
+function extractGender(text) {
+  if (!text) return null;
+  const m = text.match(/\b(male|female|m|f|other|nonbinary|non-binary)\b/i);
+  if (!m) return null;
+  const g = m[0].toLowerCase();
+  if (g.startsWith('m')) return 'Male';
+  if (g.startsWith('f')) return 'Female';
+  return 'Other';
+}
+function extractLocationPreferences(text) {
+  if (!text) return {};
+  const lower = text.toLowerCase();
+  const pref = { seatType: null, location: null };
+  if (/\b(window|win|wnd)\b/.test(lower)) pref.seatType = 'window';
+  if (/\b(aisle|ais)\b/.test(lower)) pref.seatType = 'aisle';
+  if (/\b(middle|mid)\b/.test(lower)) pref.seatType = 'middle';
+  if (/\b(front|front rows|forward)\b/.test(lower)) pref.location = 'front';
+  if (/\b(back|rear|rear rows|rearward)\b/.test(lower)) pref.location = 'back';
+  if (/\b(wing|near the wings|near wings|by the wings)\b/.test(lower)) pref.location = 'near_wings';
+  if (/\b(exit|near exit|by exit|near the exit)\b/.test(lower)) pref.location = 'near_exit';
+  if (!pref.seatType) pref.seatType = 'no_pref';
+  if (!pref.location) pref.location = 'no_pref';
+  return pref;
+}
+function detectSeatFlowChoice(text) {
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  if (/\b(auto|auto-assign|auto assign|assign seats|assign them|assign)\b/.test(lower)) return 'auto';
+  if (/\b(i(\'?ll choose| will choose)|i will pick|i'll pick|i want to pick|manual|choose myself|pick seats|choose seats|select seats)\b/.test(lower)) return 'manual';
+  return null;
+}
+
+// ---------- Seat layout + scoring ----------
+function getServerLayoutForFlight(flight) {
+  if (!flight) return null;
   try {
-    const ctx = session.bookingContext;
+    const key = `${flight?.aircraft?.make || ''} ${flight?.aircraft?.model || ''}`.trim();
+    if (key && aircraftLayouts[key]) return aircraftLayouts[key];
+  } catch (e) {}
+  return null;
+}
 
-    // --- deterministic flow for mid-booking steps ---
+function buildGenericLayout(flight, classKey = 'economy') {
+  const cols = ['A','B','C','D','E','F'];
+  const seatsTotal = (flight?.seats && flight.seats[classKey]) ? flight.seats[classKey] : (cols.length * 30);
+  const seatsPerRow = cols.length;
+  const rowCount = Math.ceil(seatsTotal / seatsPerRow);
+  return { layout: cols, seatsPerRow, rowCount, cols };
+}
+function nearWingsRange(rowCount) {
+  const start = Math.max(1, Math.floor(rowCount * 0.35));
+  const end = Math.min(rowCount, Math.ceil(rowCount * 0.65));
+  return { start, end };
+}
+function frontRange(rowCount) {
+  const end = Math.max(1, Math.ceil(rowCount * 0.25));
+  return { start: 1, end };
+}
+function backRange(rowCount) {
+  const start = Math.max(1, Math.floor(rowCount * 0.75) + 1);
+  return { start, end: rowCount };
+}
 
-    // selecting flight -> pick by number or id
-    if (ctx.step === "selecting_flight") {
-      const pickNumber = message.trim().match(/^(\d+)$/);
-      const pickIndex = pickNumber ? parseInt(pickNumber[1], 10) - 1 : null;
+function seatScore(rowIdx, colIdx, cols, rowCount, pref) {
+  let score = 0;
+  const lastIdx = cols.length - 1;
+  const aisleIndex = Math.floor(cols.length / 2);
+  const seatType = (colIdx === 0 || colIdx === lastIdx) ? 'window' :
+                   (colIdx === aisleIndex - 1 || colIdx === aisleIndex) ? 'aisle' : 'middle';
+  if (pref.seatType === 'no_pref') score += 1;
+  else if (pref.seatType === seatType) score += 10;
+  if (pref.location === 'no_pref') score += 1;
+  else if (pref.location === 'front') {
+    const front = frontRange(rowCount);
+    if (rowIdx >= front.start && rowIdx <= front.end) score += 8;
+  } else if (pref.location === 'back') {
+    const back = backRange(rowCount);
+    if (rowIdx >= back.start && rowIdx <= back.end) score += 8;
+  } else if (pref.location === 'near_wings') {
+    const wings = nearWingsRange(rowCount);
+    if (rowIdx >= wings.start && rowIdx <= wings.end) score += 9;
+  } else if (pref.location === 'near_exit') {
+    const wings = nearWingsRange(rowCount);
+    const front = frontRange(rowCount);
+    if (rowIdx <= front.end || (rowIdx >= wings.start && rowIdx <= wings.end)) score += 6;
+  }
+  score += Math.max(0, (rowCount - rowIdx) * 0.01);
+  return score;
+}
 
-      if (session.lastSearchResults && (pickIndex !== null || message.match(/id[:\s]*([A-Za-z0-9\-]+)/i))) {
-        let chosen = null;
-        if (pickIndex !== null) chosen = session.lastSearchResults[pickIndex];
-        else {
-          const m = message.match(/id[:\s]*([A-Za-z0-9\-]+)/i);
-          if (m) {
-            chosen = session.lastSearchResults.find((f) => (f.id || f.flightId || "").toString().toLowerCase() === m[1].toLowerCase());
-          }
+function advancedAssignSeats(flight, passengerData = [], bookedSeats = [], travelClass = 'economy') {
+  const classKey = (travelClass || 'economy').toLowerCase();
+  let layoutInfo = getServerLayoutForFlight(flight);
+  if (layoutInfo && layoutInfo[classKey]) layoutInfo = layoutInfo;
+  else layoutInfo = buildGenericLayout(flight, classKey);
+  const cols = layoutInfo.layout || layoutInfo.cols || ['A','B','C','D','E','F'];
+  const seatsPerRow = layoutInfo.seatsPerRow || cols.length;
+  const totalSeats = (flight?.seats && flight.seats[classKey]) ? flight.seats[classKey] : (seatsPerRow * 30);
+  const rowCount = layoutInfo.rowCount || Math.ceil(totalSeats / seatsPerRow);
+  const used = new Set(bookedSeats || []);
+  const assigned = [];
+  for (const p of passengerData) {
+    const pref = p.seatPref || { seatType: 'no_pref', location: 'no_pref' };
+    const normalizedPref = (typeof pref === 'string') ? { seatType: pref, location: 'no_pref' } : pref;
+    let best = null;
+    let bestScore = -Infinity;
+    for (let r = 1; r <= rowCount; r++) {
+      for (let c = 0; c < cols.length; c++) {
+        const seatId = `${classKey[0].toUpperCase()}${r}${cols[c]}`;
+        if (used.has(seatId)) continue;
+        const score = seatScore(r, c, cols, rowCount, normalizedPref);
+        let proximityBonus = 0;
+        if (assigned.length > 0) {
+          const assignedRows = assigned.map(sid => { const m = sid.match(/\d+/); return m ? Number(m[0]) : 0; });
+          const minDist = Math.min(...assignedRows.map(ar => Math.abs(ar - r)));
+          proximityBonus = Math.max(0, (10 - minDist) * 0.02);
         }
+        const finalScore = score + proximityBonus;
+        if (finalScore > bestScore) { bestScore = finalScore; best = { seatId, r, c, score: finalScore }; }
+      }
+    }
+    if (!best) return null;
+    assigned.push(best.seatId);
+    used.add(best.seatId);
+  }
+  return assigned;
+}
+
+// ---------- LLM support ----------
+async function callLLMForHelp(systemPrompt, userText, context = {}) {
+  if (!OPENROUTER_KEY) return null;
+  try {
+    const resp = await axios.post(OPENROUTER_URL, {
+      model: MODEL_NAME,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userText },
+        { role: 'assistant', content: JSON.stringify(context || {}) }
+      ],
+      temperature: 0.25
+    }, { headers: { Authorization: `Bearer ${OPENROUTER_KEY}` } });
+    return resp.data?.choices?.[0]?.message?.content || null;
+  } catch (e) {
+    console.warn('LLM call failed:', e.message);
+    return null;
+  }
+}
+
+// ---------- Main Chat Handler ----------
+const chatWithAssistant = async (req, res) => {
+  try {
+    const { message, sessionId: incomingSessionId } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'message required' });
+
+    const session = ensureSession(incomingSessionId);
+    const msg = (message || '').trim();
+    const lower = msg.toLowerCase();
+    session.history.push({ role: 'user', content: msg });
+
+    // greetings
+    if (/^(hi|hello|hey)\b/i.test(lower)) {
+      const reply = "Hi — TripNBook AI here. I'll help you find and book flights step-by-step. Try: 'Find flights from Chennai to Delhi this Sunday.'";
+      session.history.push({ role: 'assistant', content: reply });
+      return res.json({ reply, sessionId: session.id });
+    }
+
+    // reset
+    if (/^(reset|start over|clear chat)/i.test(lower)) {
+      sessions.delete(session.id);
+      const reply = 'Session cleared. Start a new search when ready.';
+      return res.json({ reply, sessionId: session.id });
+    }
+
+    // booking-flow protections
+    const searchTriggers = /\b(find|search|show (?:me )?flights?|flights? from|new search|another flight|different flight|change (?:flight|date)|start over|look for|search again|from\s+[A-Za-z]+?\s+to\s+[A-Za-z]+)\b/i;
+    const cancelBookingTriggers = /\b(cancel booking|cancel|discard booking|clear booking|start over|reset booking)\b/i;
+    
+    if (cancelBookingTriggers.test(lower)) {
+      session.selectedFlight = null;
+      session.bookingDraft = null;
+      session.lastSearchResults = session.lastSearchResults || [];
+      const reply = 'Okay — booking cancelled. You can start a new search when ready.';
+      session.history.push({ role: 'assistant', content: reply });
+      return res.json({ reply, sessionId: session.id });
+    }
+
+    // CRITICAL FIX: Check if we're in booking flow stages
+    const inBookingFlow = Boolean(session.bookingDraft?.stage);
+    const hasSelectedFlightAwaitingCount = Boolean(session.selectedFlight && !session.bookingDraft);
+
+    // quick finalise/book paths (code/number) - ONLY if NOT in booking flow
+    const finaliseRegex = /\b(finali(?:s|z)e|finalize|finalise|book|confirm)\b/i;
+    const explicitBookCode = msg.match(/\b(?:book|finali(?:s|z)e|finalize|select)\b[\s:,-]*([A-Za-z0-9-]{2,8})\b/i);
+    const numericOnly = msg.match(/^\s*(?:book|finali(?:s|z)e)?\s*#?\s*(\d{1,2})\s*$/i);
+
+    if (finaliseRegex.test(lower) && !explicitBookCode && !numericOnly && session.selectedFlight && !inBookingFlow) {
+      const chosen = session.selectedFlight;
+      const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect each passenger's name, age, and gender one-by-one.`;
+      session.history.push({ role: 'assistant', content: reply });
+      return res.json({ reply, sessionId: session.id });
+    }
+
+    if (finaliseRegex.test(lower) && explicitBookCode && !inBookingFlow) {
+      const code = explicitBookCode[1];
+      if (session.lastSearchResults?.length) {
+        const chosen = session.lastSearchResults.find(f => (f.flightNumber || '').toLowerCase() === code.toLowerCase());
         if (chosen) {
-          ctx.selectedFlight = chosen;
-          ctx.price = chosen.price || chosen.fare || chosen.cost;
-          ctx.step = "awaiting_passenger_name";
-          session.conversationHistory.push({ role: "assistant", content: `You selected ${chosen.airline} ${chosen.flightNumber || chosen.id}. What's the passenger(s) full name(s) and details? (you can say: "2 passengers Vinod age 21 male Kaviya age 21 female")` });
-          return res.status(200).json({ reply: `Great — you chose ${chosen.airline} ${chosen.flightNumber || chosen.id}. What's the passenger(s) full name(s) and details?`, session });
+          session.selectedFlight = chosen;
+          const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id });
         }
       }
-    }
-
-    // awaiting passenger name or passenger bulk info
-    if (ctx.step === "awaiting_passenger_name") {
-      // Try parse multiple passengers
-      const parsedPassengers = parsePassengersFromText(message);
-
-      if (parsedPassengers && parsedPassengers.length) {
-        ctx.passengers = parsedPassengers.map(p => ({
-          name: p.name || "N/A",
-          age: p.age || null,
-          gender: p.gender || null,
-        }));
-
-        const allHaveAge = ctx.passengers.every(p => p.age !== null);
-        const allHaveGender = ctx.passengers.every(p => !!p.gender);
-
-        if (allHaveAge && allHaveGender) {
-          ctx.step = "awaiting_seat_pref";
-          const reply = `Thanks — I have ${ctx.passengers.length} passengers: ${ctx.passengers.map(p => `${p.name} (${p.age}, ${p.gender})`).join(", ")}. Do you prefer Window, Aisle, or Middle seats?`;
-          session.conversationHistory.push({ role: "assistant", content: reply });
-          return res.status(200).json({ reply, session });
-        }
-
-        // Ask for first missing detail
-        const idxMissing = ctx.passengers.findIndex(p => !p.age || !p.gender);
-        if (idxMissing >= 0) {
-          ctx.step = !ctx.passengers[idxMissing].age ? "awaiting_age" : "awaiting_gender";
-          const ask = `Thanks. What is ${ctx.passengers[idxMissing].name}'s ${!ctx.passengers[idxMissing].age ? "age" : "gender"}?`;
-          session.conversationHistory.push({ role: "assistant", content: ask });
-          return res.status(200).json({ reply: ask, session });
-        }
+      const flightFromDb = await Flight.findOne({ flightNumber: new RegExp(`^${code}$`, 'i') }).lean();
+      if (flightFromDb) {
+        session.selectedFlight = flightFromDb;
+        session.context.fromCity = session.context.fromCity || { city: flightFromDb.departureCity, iata: flightFromDb.departureCityCode };
+        session.context.toCity = session.context.toCity || { city: flightFromDb.arrivalCity, iata: flightFromDb.arrivalCityCode };
+        session.lastSearchResults = session.lastSearchResults && session.lastSearchResults.length ? session.lastSearchResults : [flightFromDb];
+        const reply = `You selected ✈️ ${flightFromDb.airline} ${flightFromDb.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
       }
-
-      // fallback: single passenger name
-      ctx.passengers = [{ name: message.trim(), age: null, gender: null }];
-      ctx.step = "awaiting_age";
-      const ask = `Thanks. What is ${ctx.passengers[0].name}'s age?`;
-      session.conversationHistory.push({ role: "assistant", content: ask });
-      return res.status(200).json({ reply: ask, session });
-    }
-
-    // awaiting age
-    if (ctx.step === "awaiting_age") {
-      const ageMatch = message.trim().match(/(\d{1,3})/);
-      const age = ageMatch ? parseInt(ageMatch[1], 10) : null;
-
-      const idx = ctx.passengers.findIndex(p => !p.age);
-      if (idx >= 0) {
-        ctx.passengers[idx].age = age || null;
-        ctx.step = "awaiting_gender";
-        const askGender = `Got it. What's ${ctx.passengers[idx].name}'s gender? (Male / Female / Other)`;
-        session.conversationHistory.push({ role: "assistant", content: askGender });
-        return res.status(200).json({ reply: askGender, session });
+      if (session.lastSearchResults && session.lastSearchResults.length) {
+        const reply = `I couldn't find that exact flight in your recent search. Here are your last results:\n\n${formatFlightsShort(session.lastSearchResults)}\n\nReply with the number or the flight code to select.`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
       }
-
-      // fallback
-      ctx.passengers[0].age = age || null;
-      ctx.step = "awaiting_gender";
-      const askGender = `Got it. What's ${ctx.passengers[0].name}'s gender? (Male / Female / Other)`;
-      session.conversationHistory.push({ role: "assistant", content: askGender });
-      return res.status(200).json({ reply: askGender, session });
+      return res.json({ reply: "I don't have recent search results. Please tell me departure and destination (e.g., 'Flights from Chennai to Kolkata on Sunday').", sessionId: session.id });
     }
 
-    // awaiting gender
-    if (ctx.step === "awaiting_gender") {
-      const genderText = message.trim();
-      const idx = ctx.passengers.findIndex(p => !p.gender);
-      if (idx >= 0) {
-        ctx.passengers[idx].gender = genderText;
-        // check for next missing
-        const nextMissing = ctx.passengers.findIndex(p => !p.age || !p.gender);
-        if (nextMissing >= 0) {
-          ctx.step = !ctx.passengers[nextMissing].age ? "awaiting_age" : "awaiting_gender";
-          const ask = `Thanks. What is ${ctx.passengers[nextMissing].name}'s ${!ctx.passengers[nextMissing].age ? "age" : "gender"}?`;
-          session.conversationHistory.push({ role: "assistant", content: ask });
-          return res.status(200).json({ reply: ask, session });
-        }
-        // all good -> seat pref
-        ctx.step = "awaiting_seat_pref";
-        const doneMsg = `All set. Do you prefer Window, Aisle, or Middle seats?`;
-        session.conversationHistory.push({ role: "assistant", content: doneMsg });
-        return res.status(200).json({ reply: doneMsg, session });
-      }
-
-      // fallback
-      ctx.passengers[0].gender = genderText;
-      ctx.step = "awaiting_seat_pref";
-      const doneMsg = `Thanks. Do you prefer Window, Aisle, or Middle seat?`;
-      session.conversationHistory.push({ role: "assistant", content: doneMsg });
-      return res.status(200).json({ reply: doneMsg, session });
-    }
-
-    // awaiting seat preference
-    if (ctx.step === "awaiting_seat_pref") {
-      ctx.seatPreference = message.trim();
-      ctx.step = "awaiting_confirm";
-
-      // build summary (support multiple passengers)
-      const passengerSummary = ctx.passengers.map(p => `${p.name}${p.age ? ` (${p.age})` : ''}${p.gender ? ` ${p.gender}` : ''}`).join(", ");
-      const summary = `Booking summary:\nFlight: ${ctx.selectedFlight?.airline || ""} ${ctx.selectedFlight?.flightNumber || ctx.selectedFlight?.id}\nDate: ${ctx.selectedFlight?.depart || ctx.selectedFlight?.departureDate || "N/A"}\nPassengers: ${passengerSummary}\nSeat preference: ${ctx.seatPreference}\nPrice: ₹${ctx.price || "N/A"}`;
-      session.conversationHistory.push({ role: "assistant", content: `Got it. ${summary}\nReply 'confirm' to proceed to seat selection & payment and finalize booking, or 'cancel' to abort.` });
-      return res.status(200).json({ reply: `Got it. ${summary}\nReply 'confirm' to proceed to seat selection & payment and finalize booking, or 'cancel' to abort.`, session });
-    }
-
-    // awaiting confirm -> emit navigateTo and bookingDraft
-    if (ctx.step === "awaiting_confirm") {
-      if (mlower === "cancel") {
-        clearSession(sessionId);
-        return res.status(200).json({ reply: "Booking cancelled. Let me know if you want to search again." });
-      }
-      if (mlower === "confirm" || mlower === "yes" || mlower.includes("pay")) {
-        const bookingDraft = {
-          flight: ctx.selectedFlight,
-          passengers: ctx.passengers,
-          seatPreference: ctx.seatPreference,
-          price: ctx.price,
-          travelClass: ctx.travelClass || "economy",
-        };
-        ctx.step = "awaiting_payment";
-        ctx.bookingDraft = bookingDraft;
-
-        // Prefer seat-selection before payment; frontend can choose to skip to /payment
-        const navigateObj = {
-          path: "/seat-booking",
-          state: {
-            flight: ctx.selectedFlight,
-            travelClass: bookingDraft.travelClass,
-            passengerData: ctx.passengers,
-            preferredSeatType: ctx.seatPreference || null,
-            bookingDraft, // provide as well
-          }
-        };
-
-        session.conversationHistory.push({ role: "assistant", content: `Redirecting you to seat selection (you can then proceed to payment) for ₹${ctx.price}.` });
-        return res.status(200).json({
-          reply: `Redirecting you to seat selection (you can then proceed to payment) for ₹${ctx.price}.`,
-          navigateTo: navigateObj,
-          bookingDraft,
-          session
-        });
-      }
-    }
-
-    // awaiting payment manual ack (rare)
-    if (ctx.step === "awaiting_payment" && (mlower.includes("paid") || mlower.includes("payment done"))) {
-      // no-op; frontend should call /assistant/confirm-payment after actual payment completes
-    }
-
-    // --- not in mid-booking deterministic flow: use LLM extraction or fallback ---
-    const currentDate = new Date().toLocaleDateString("en-IN", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace("{{TODAY_DATE}}", currentDate);
-
-    const contextMessages = session.conversationHistory.slice(-8).map((m) => {
-      return { role: m.role === "assistant" ? "assistant" : "user", content: m.content };
-    });
-
-    const extractionPrompt = makeExtractionPrompt(systemPrompt, message);
-
-    // call LLM
-    let llmResponse;
-    try {
-      llmResponse = await callLLM([
-        { role: "system", content: systemPrompt },
-        ...contextMessages,
-        { role: "user", content: extractionPrompt },
-      ]);
-    } catch (err) {
-      // LLM failed — fallback to simple intent detection
-      const intent = detectSimpleIntent(message);
-      if (intent === "flight_search") {
-        // emulate parsed
-        parsed = { action: "flight_search", origin: "", destination: "", date: "", time_pref: "any", travelClass: "any", passengers: 1 };
-      } else {
-        parsed = { action: "chat", reply: message };
-      }
-      llmResponse = null;
-    }
-
-    const llmText = (llmResponse?.data?.choices?.[0]?.message?.content || "").trim();
-
-    let parsed = null;
-    if (llmText) {
-      try {
-        parsed = JSON.parse(llmText);
-      } catch (e) {
-        const intent = detectSimpleIntent(message);
-        parsed = { action: intent === "flight_search" ? "flight_search" : "chat", reply: message };
-      }
-    } else {
-      const intent = detectSimpleIntent(message);
-      parsed = { action: intent === "flight_search" ? "flight_search" : "chat", reply: message };
-    }
-
-    // Handle parsed actions
-    if (parsed.action === "flight_search") {
-      // accept either IATA or city name from LLM
-      const originRaw = parsed.origin || parsed.from || parsed.orig || "";
-      const destinationRaw = parsed.destination || parsed.to || parsed.dest || "";
-      const dateRaw = parsed.date || parsed.travelDate || "";
-
-      // parse relative date phrases if provided
-      const dateNormalized = dateRaw || parseRelativeDate(message) || "";
-
-      try {
-        // try /search first, fall back to base endpoint
-        let flightRes;
-        try {
-          flightRes = await axios.get("http://localhost:5000/api/flights/search", {
-            params: { from: originRaw, to: destinationRaw, date: dateNormalized }
-          });
-        } catch (e) {
-          flightRes = await axios.get("http://localhost:5000/api/flights", {
-            params: { from: originRaw, to: destinationRaw, date: dateNormalized }
-          });
-        }
-
-        const flights = flightRes.data.flights || flightRes.data || [];
-        session.lastSearchResults = flights;
-        session.bookingContext.step = "selecting_flight";
-        const reply = `I found these flights:\n\n${formatFlightsList(flights)}\n\nReply with the number of the flight you want to pick (e.g. '1'), or 'more' to search more options.`;
-        session.conversationHistory.push({ role: "assistant", content: reply });
-        return res.status(200).json({ reply, session });
-      } catch (err) {
-        console.error("Flight search error:", err.response?.data || err.message);
-        return res.status(500).json({ error: "Flight search failed", details: err.message });
-      }
-    }
-
-    if (parsed.action === "start_booking") {
-      const fid = parsed.flightId;
-      let chosen = null;
-      if (session.lastSearchResults) chosen = session.lastSearchResults.find((f) => (f.id || f.flightId || "").toString().toLowerCase() === (fid || "").toString().toLowerCase() || (f.flightNumber || "").toLowerCase() === (fid || "").toString().toLowerCase());
-      if (!chosen) {
-        try {
-          const detailRes = await axios.get("http://localhost:5000/api/flights/detail", { params: { id: fid } });
-          chosen = detailRes.data;
-        } catch (e) {
-          // ignore
-        }
-      }
+    // FIXED: only treat a plain numeric message as a flight-selection when NOT in booking flow AND NOT awaiting passenger count
+    if (numericOnly && session.lastSearchResults?.length && !inBookingFlow && !hasSelectedFlightAwaitingCount) {
+      const idx = parseInt(numericOnly[1], 10) - 1;
+      const chosen = session.lastSearchResults[idx];
       if (chosen) {
-        session.bookingContext.selectedFlight = chosen;
-        session.bookingContext.price = chosen.price || chosen.fare;
-        session.bookingContext.step = "awaiting_passenger_name";
-        const reply = `You chose ${chosen.airline || ""} ${chosen.flightNumber || chosen.id}. Please provide passenger full name to proceed. You can also paste all passengers in one line: "2 passengers Vinod age 21 male Kaviya age 21 female"`;
-        session.conversationHistory.push({ role: "assistant", content: reply });
-        return res.status(200).json({ reply, session });
+        session.selectedFlight = chosen;
+        const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
       } else {
-        return res.status(200).json({ reply: "I couldn't find that flight in the recent search results. Could you paste the flight id or choose from the list again?" });
+        const reply = `I couldn't find that entry number in your recent results. Reply with the number shown in the list (e.g., "1").\n\n${formatFlightsShort(session.lastSearchResults)}`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
       }
     }
 
-    // passengers provided structured by LLM
-    if (parsed.action === "passengers") {
-      const passengers = parsed.passengers || [];
-      if (Array.isArray(passengers) && passengers.length) {
-        session.bookingContext.passengers = passengers.map(p => ({
-          name: p.name || "N/A",
-          age: p.age || null,
-          gender: p.gender || null,
-        }));
-        // move to seat selection or ask missing info
-        const ctx2 = session.bookingContext;
-        const allHaveAge = ctx2.passengers.every(p => p.age !== null);
-        const allHaveGender = ctx2.passengers.every(p => !!p.gender);
-        if (allHaveAge && allHaveGender) {
-          ctx2.step = "awaiting_seat_pref";
-          const reply = `Thanks — got ${ctx2.passengers.length} passengers. Do you prefer Window, Aisle, or Middle seats?`;
-          session.conversationHistory.push({ role: "assistant", content: reply });
-          return res.status(200).json({ reply, session });
-        } else {
-          ctx2.step = "awaiting_gender";
-          const nextMissing = ctx2.passengers.findIndex(p => !p.age || !p.gender);
-          const ask = `Thanks. What is ${ctx2.passengers[nextMissing].name}'s ${!ctx2.passengers[nextMissing].age ? "age" : "gender"}?`;
-          session.conversationHistory.push({ role: "assistant", content: ask });
-          return res.status(200).json({ reply: ask, session });
+    // filtering & selection - ONLY if not in booking flow
+    if (session.lastSearchResults.length > 0 && !inBookingFlow && !hasSelectedFlightAwaitingCount) {
+      const filtered = applyFilters(session.lastSearchResults, msg);
+      if (/\b(cheapest|cheap|lowest|sort by price|budget)\b/.test(lower)) {
+        const sorted = [...filtered].sort((a, b) => (a.price || 0) - (b.price || 0));
+        session.lastSearchResults = sorted;
+        const reply = `Here are filtered flights:\n\n${formatFlightsShort(sorted)}`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
+      }
+      if (/\b(evening|morning|after|before|am|pm)\b/.test(lower)) {
+        session.lastSearchResults = filtered;
+        const reply = filtered.length ? `Here are filtered flights:\n\n${formatFlightsShort(filtered)}` : "No flights found matching that filter.";
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
+      }
+      const codeInText = msg.match(/\b([A-Za-z0-9-]{2,8})\b/);
+      if (codeInText) {
+        const code = codeInText[1].toLowerCase();
+        const chosen = session.lastSearchResults.find(f => (f.flightNumber || '').toLowerCase() === code);
+        if (chosen) {
+          session.selectedFlight = chosen;
+          const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id });
         }
       }
+      const asNum = parseInt(msg, 10);
+      if (!isNaN(asNum) && session.lastSearchResults[asNum - 1]) {
+        const chosen = session.lastSearchResults[asNum - 1];
+        session.selectedFlight = chosen;
+        const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
+      }
     }
 
-    // chat fallback: call LLM for a normal reply
-    if (parsed.action === "chat") {
-      const chatRes = await callLLM([
-        { role: "system", content: systemPrompt },
-        ...contextMessages,
-        { role: "user", content: message },
-      ]);
-      const chatReply = chatRes.data?.choices?.[0]?.message?.content || "Sorry, I couldn't respond.";
-      session.conversationHistory.push({ role: "assistant", content: chatReply });
-      return res.status(200).json({ reply: chatReply, session });
+    // ---------- Stepwise booking flow ----------
+    // STEP 1: Awaiting passenger count
+    if (session.selectedFlight && !session.bookingDraft) {
+      const maybeCount = extractPassengerCount(msg);
+      if (maybeCount && maybeCount > 0 && maybeCount <= 20) {
+        const count = maybeCount;
+        // DEFAULT passenger objects include a `type` property to match Booking schema.
+        session.bookingDraft = { 
+          flight: session.selectedFlight, 
+          passengerData: Array(count).fill(null).map(() => ({ type: 'adult' })), // default type
+          expectedPassengers: count, 
+          currentIndex: 0, 
+          stage: 'collect_name',
+          travelClass: 'Economy'
+        };
+
+        // PERSIST SESSION
+        sessions.set(session.id, session);
+
+        const reply = `Great — I'll collect details for ${count} passenger(s). Let's start with passenger #1: please provide the full name.`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id, bookingDraft: session.bookingDraft });
+      } else {
+        const reply = `How many passengers are traveling? Please reply with a number (e.g., "2" or "3").`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
+      }
     }
 
-    // default fallback
-    return res.status(200).json({ reply: "Sorry, I couldn't understand. Could you rephrase?" });
+    // STEP 2-N: Collecting passenger details
+    if (session.bookingDraft && session.bookingDraft.stage && session.selectedFlight) {
+      const draft = session.bookingDraft;
+      const idx = draft.currentIndex || 0;
+      const expected = draft.expectedPassengers || 1;
+
+      // collect_name
+      if (draft.stage === 'collect_name') {
+        const name = extractName(msg) || titleCase(msg.trim());
+        if (!name || name.length < 2 || !/[A-Za-z]/.test(name)) {
+          const reply = `I didn't catch a valid name. Please type the full name for passenger #${idx + 1} (e.g., "Rahul Sharma").`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+        }
+
+        draft.passengerData[idx].fullName = name;
+        // keep existing type if present (defaulted earlier)
+        draft.stage = 'collect_age';
+
+        session.bookingDraft = draft;
+        sessions.set(session.id, session);
+
+        const reply = `Got it — name: **${name}**. Now please provide age for passenger #${idx + 1} (e.g., "29").`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+      }
+
+      // collect_age
+      if (draft.stage === 'collect_age') {
+        const age = extractAge(msg);
+        if (!age || age <= 0 || age > 120) {
+          const reply = `Please provide a valid age (1–120) for passenger #${idx + 1}.`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+        }
+
+        draft.passengerData[idx].age = age;
+        // optionally adjust type based on age (simple heuristic)
+        if (!draft.passengerData[idx].type) draft.passengerData[idx].type = 'adult';
+        if (age < 2) draft.passengerData[idx].type = 'infant';
+        else if (age >= 2 && age <= 11) draft.passengerData[idx].type = 'child';
+        else draft.passengerData[idx].type = 'adult';
+
+        draft.stage = 'collect_gender';
+
+        session.bookingDraft = draft;
+        sessions.set(session.id, session);
+
+        const reply = `Age recorded: **${age}**. Now provide gender for passenger #${idx + 1} (Male / Female / Other).`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+      }
+
+      // collect_gender
+      if (draft.stage === 'collect_gender') {
+        const gender = extractGender(msg);
+        if (!gender) {
+          const reply = `Please reply with gender: **Male**, **Female**, or **Other** for passenger #${idx + 1}.`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+        }
+
+        draft.passengerData[idx].gender = gender;
+        // ensure type exists
+        if (!draft.passengerData[idx].type) draft.passengerData[idx].type = 'adult';
+        draft.currentIndex = idx + 1;
+
+        session.bookingDraft = draft;
+        sessions.set(session.id, session);
+
+        if (draft.currentIndex < expected) {
+          draft.stage = 'collect_name';
+          const reply = `Recorded! Now please provide **full name** for passenger #${draft.currentIndex + 1}.`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+        }
+
+        // All passengers collected → go to seat preferences
+        draft.stage = 'collect_seat_preferences';
+        draft.currentIndex = 0;
+
+        session.bookingDraft = draft;
+        sessions.set(session.id, session);
+
+        const summary = draft.passengerData
+          .map((p, i) => `${i + 1}. **${p.fullName}** — Age: ${p.age}, Gender: ${p.gender}, Type: ${p.type || 'adult'}`)
+          .join('\n');
+
+        const reply = `Thanks! I have details for all ${expected} passengers:\n\n${summary}\n\nNow let's set **seat preferences**. For passenger #1 (**${draft.passengerData[0].fullName}**), reply with:\n- \`window\`\n- \`aisle\`\n- \`middle\`\n- \`no preference\``;
+
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+      }
+
+      // collect_seat_preferences (one by one)
+      if (draft.stage === 'collect_seat_preferences') {
+        const idx = draft.currentIndex || 0;
+        const pref = extractLocationPreferences(msg);
+        
+        draft.passengerData[idx].seatPref = pref.seatType === 'no_pref' ? { seatType: 'no_pref', location: 'no_pref' } : pref;
+        
+        draft.currentIndex = idx + 1;
+        session.bookingDraft = draft;
+        sessions.set(session.id, session);
+
+        if (draft.currentIndex < expected) {
+          const nextPassenger = draft.passengerData[draft.currentIndex];
+          const reply = `Got it! For passenger #${draft.currentIndex + 1} (**${nextPassenger.fullName}**), reply with:\n- \`window\`\n- \`aisle\`\n- \`middle\`\n- \`no preference\``;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+        }
+        
+        // All preferences collected - ask about auto vs manual
+        draft.stage = 'collect_seat_flow';
+        session.bookingDraft = draft;
+        sessions.set(session.id, session);
+
+        const reply = `Perfect! I have seat preferences for all passengers.\n\nWould you like me to:\n1. **Auto-assign seats** based on preferences\n2. **Let you choose seats manually**\n\nReply \`auto\` or \`manual\`.`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+      }
+
+      // collect_seat_flow
+      if (draft.stage === 'collect_seat_flow') {
+        const flowChoice = detectSeatFlowChoice(msg);
+
+        if (flowChoice === 'auto') {
+          draft.seatFlow = 'auto';
+          draft.stage = 'seat_assignment';
+          session.bookingDraft = draft;
+          sessions.set(session.id, session);
+
+          const allBookings = await Booking.find({ item: session.selectedFlight._id }).lean().select('selectedSeats') || [];
+          const bookedSeats = [];
+          for (const b of allBookings) { 
+            if (Array.isArray(b.selectedSeats)) bookedSeats.push(...b.selectedSeats); 
+          }
+
+          const assigned = advancedAssignSeats(session.selectedFlight, draft.passengerData, bookedSeats, draft.travelClass || 'Economy');
+          
+          if (assigned && assigned.length === draft.passengerData.length) {
+            draft.selectedSeats = assigned;
+            draft.totalAmount = (session.selectedFlight.price || 0) * draft.passengerData.length;
+            // Not yet saved to DB; only ready after explicit confirm
+            draft.readyForPayment = false;
+            session.bookingDraft = draft;
+            sessions.set(session.id, session);
+
+            const seatAssignments = draft.passengerData.map((p, i) => `${p.fullName}: **${assigned[i]}**`).join('\n');
+            const reply = `I've assigned seats:\n${seatAssignments}\n\nTotal: **₹${draft.totalAmount}**\n\nReply **confirm** to proceed to payment, or **change seats** to pick manually.`;
+            session.history.push({ role: 'assistant', content: reply });
+            return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+          } else {
+            draft.seatFlow = 'manual';
+            draft.stage = 'collect_manual_choice';
+            session.bookingDraft = draft;
+            sessions.set(session.id, session);
+
+            const reply = `I couldn't auto-assign perfect seats. Reply **choose seats** to pick manually.`;
+            session.history.push({ role: 'assistant', content: reply });
+            return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+          }
+        }
+
+        if (flowChoice === 'manual' || /\b(manual|choose|pick|i'll pick|i will pick)\b/i.test(lower)) {
+          draft.seatFlow = 'manual';
+          draft.stage = 'collect_manual_choice';
+          session.bookingDraft = draft;
+          sessions.set(session.id, session);
+
+          const reply = `Okay — reply **choose seats** to open seat selection.`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+        }
+
+        const prompt = `Reply **auto** to auto-assign seats, or **manual** to choose yourself.`;
+        session.history.push({ role: 'assistant', content: prompt });
+        return res.json({ reply: prompt, sessionId: session.id, bookingDraft: draft });
+      }
+
+      // collect_manual_choice
+      if (draft.stage === 'collect_manual_choice') {
+        if (/\b(choose seats|choose seat|pick seats|pick seat|select seats)\b/i.test(lower)) {
+          const navData = {
+            path: '/seat-booking',
+            state: {
+              flight: draft.flight,
+              travelClass: draft.travelClass || 'Economy',
+              passengerData: draft.passengerData,
+              selectedSeats: draft.selectedSeats || [],
+              allowManualSelect: true,
+              booking: draft
+            }
+          };
+          const reply = `Opening seat selection UI. Please choose ${draft.passengerData.length} seat(s).`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, navigateTo: navData, sessionId: session.id, bookingDraft: draft });
+        }
+        
+        if (/^(confirm|yes|book)$/i.test(lower)) {
+          const totalAmount = (draft.flight.price || 0) * draft.passengerData.length;
+
+          // If user is authenticated, save booking now and attach user.
+          if (req.user && req.user._id) {
+            const bookingPayload = {
+              type: 'flight',
+              user: req.user._id, // attach user
+              item: draft.flight._id,
+              passengerData: draft.passengerData.map(p => ({ ...(p || {}), type: p?.type || 'adult' })),
+              selectedSeats: draft.selectedSeats || [],
+              totalAmount,
+              travelClass: draft.travelClass || 'Economy',
+              paymentStatus: 'Pending'
+            };
+            const booking = new Booking(bookingPayload);
+            const saved = await booking.save();
+            draft.bookingId = saved._id;
+            draft.totalAmount = totalAmount;
+            draft.readyForPayment = true;
+            session.bookingDraft = draft;
+            sessions.set(session.id, session);
+
+            const navData = { path: '/payment', state: { booking: draft } };
+            const reply = `Booking created! Total: ₹${totalAmount}\nRedirecting to payment...`;
+            session.history.push({ role: 'assistant', content: reply });
+            return res.json({ reply, navigateTo: navData, sessionId: session.id, bookingDraft: draft });
+          } else {
+            // Not logged in — do NOT attempt to create DB booking. Mark draft ready and send to payment UI.
+            draft.totalAmount = totalAmount;
+            draft.readyForPayment = true;
+            draft.bookingId = null;
+            session.bookingDraft = draft;
+            sessions.set(session.id, session);
+
+            const navData = { path: '/payment', state: { booking: draft } };
+            const reply = `You're almost done — please log in to complete payment. Redirecting to payment...`;
+            session.history.push({ role: 'assistant', content: reply });
+            return res.json({ reply, navigateTo: navData, sessionId: session.id, bookingDraft: draft });
+          }
+        }
+        
+        const hint = `Reply **choose seats** to pick manually, or **confirm** to proceed.`;
+        session.history.push({ role: 'assistant', content: hint });
+        return res.json({ reply: hint, sessionId: session.id, bookingDraft: draft });
+      }
+    }
+
+    // Final confirm — only if all data is complete
+    if (/^(confirm|yes|book|proceed|pay|checkout)$/i.test(lower) && session.bookingDraft) {
+      const draft = session.bookingDraft;
+
+      const allValid = draft.passengerData?.length === draft.expectedPassengers &&
+        draft.passengerData.every(p => p.fullName && p.age && p.gender);
+
+      if (!allValid) {
+        const reply = `I still need complete details. We're at **${(draft.stage || 'unknown').replace('collect_', '').replace('_', ' ')}** for passenger #${draft.currentIndex + 1}.`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id, bookingDraft: draft });
+      }
+
+      const totalAmount = (draft.flight.price || 0) * draft.passengerData.length;
+
+      // If user is authenticated, create booking now
+      if (req.user && req.user._id) {
+        const bookingPayload = {
+          type: 'flight',
+          user: req.user._id,
+          item: draft.flight._id,
+          passengerData: draft.passengerData.map(p => ({ ...(p || {}), type: p?.type || 'adult' })),
+          selectedSeats: draft.selectedSeats || [],
+          totalAmount,
+          travelClass: draft.travelClass || 'Economy',
+          paymentStatus: 'Pending'
+        };
+        const booking = new Booking(bookingPayload);
+        const saved = await booking.save();
+        draft.bookingId = saved._id;
+        draft.totalAmount = totalAmount;
+        draft.readyForPayment = true;
+
+        session.bookingDraft = draft;
+        sessions.set(session.id, session);
+
+        const navData = { path: '/payment', state: { booking: draft } };
+        const reply = `Booking created! Total: ₹${totalAmount}\nRedirecting to payment...`;
+        session.history.push({ role: 'assistant', content: reply });
+
+        return res.json({ reply, navigateTo: navData, sessionId: session.id, bookingDraft: draft });
+      } else {
+        // Not authenticated — save draft in session, do not create DB booking; require login on Payment page
+        draft.totalAmount = totalAmount;
+        draft.readyForPayment = true;
+        draft.bookingId = null;
+        session.bookingDraft = draft;
+        sessions.set(session.id, session);
+
+        const navData = { path: '/payment', state: { booking: draft } };
+        const reply = `You're almost done — please log in to complete payment. Redirecting to payment...`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, navigateTo: navData, sessionId: session.id, bookingDraft: draft });
+      }
+    }
+
+    // parse flight search
+    const date = parseDateFromText(msg);
+    let from = session.context.fromCity || null;
+    let to = session.context.toCity || null;
+    const pairMatch = msg.match(/\bfrom\s+([A-Za-z\s]+?)\s+(?:to|->|→)\s+([A-Za-z\s]+?)(?:\b|$)/i) || msg.match(/\b([A-Za-z\s]+?)\s+(?:to|->|→)\s+([A-Za-z\s]+?)\b/i);
+    if (pairMatch) {
+      const a = pairMatch[1];
+      const b = pairMatch[2];
+      from = resolveCity(a);
+      to = resolveCity(b);
+    }
+    if (!from || !to) {
+      const llmHelp = await callLLMForHelp(SYSTEM_PROMPT, msg, session.context);
+      const reply = llmHelp || "I couldn't detect both origin and destination. Try: 'Flights from Chennai to Kolkata on Sunday'.";
+      session.history.push({ role: 'assistant', content: reply });
+      return res.json({ reply, sessionId: session.id });
+    }
+
+    const flights = await Flight.find({ 
+      departureCityCode: new RegExp(from.iata, 'i'), 
+      arrivalCityCode: new RegExp(to.iata, 'i') 
+    }).lean();
+    
+    if (!flights.length) {
+      const reply = `No flights found from ${from.city} to ${to.city}.`;
+      session.history.push({ role: 'assistant', content: reply });
+      return res.json({ reply, sessionId: session.id });
+    }
+
+    session.context = { fromCity: from, toCity: to, date };
+    session.lastSearchResults = flights;
+    session.selectedFlight = null;
+    session.bookingDraft = null;
+
+    const reply = `Found ${flights.length} flights from ${from.city} to ${to.city}${date ? ' on ' + date : ''}.\n\n${formatFlightsShort(flights)}\n\nReply with the number to select, or say 'sort by cheapest' or 'show evening flights after 7pm'.`;
+    session.history.push({ role: 'assistant', content: reply });
+    return res.json({ reply, sessionId: session.id, resultsCount: flights.length });
   } catch (err) {
-    console.error("Assistant controller error:", err.response?.data || err.message || err);
-    return res.status(500).json({
-      error: "AI assistant failed to respond.",
-      details: err.response?.data || err.message,
-    });
+    console.error('Assistant error:', err);
+    return res.status(500).json({ error: 'assistant failed', details: err.message });
   }
 };
 
-// Endpoint called by frontend after payment completes
-// It creates booking in your system (calls your /api/bookings) and marks session booking as completed
+// confirm payment endpoint
 const confirmPaymentAndCreateBooking = async (req, res) => {
-  const { sessionId, paymentResult } = req.body;
-  if (!sessionId || !paymentResult) return res.status(400).json({ error: "sessionId and paymentResult required" });
-
-  const session = getSession(sessionId);
-  if (!session || !session.bookingContext || (!session.bookingContext.bookingDraft && !session.bookingContext.selectedFlight)) {
-    return res.status(400).json({ error: "No booking in progress for this session" });
-  }
-
-  // Require Authorization header to forward to /api/bookings (protected)
-  if (!req.headers || !req.headers.authorization) {
-    return res.status(401).json({ error: "Authentication required. Please include Authorization header (Bearer <token>)" });
-  }
-
-  const ctx = session.bookingContext;
-
-  // prefer bookingDraft if present
-  const flight = ctx.bookingDraft?.flight || ctx.selectedFlight;
-  const rawPassengers = ctx.bookingDraft?.passengers || ctx.passengers || [];
-  const seatPreference = ctx.bookingDraft?.seatPreference || ctx.seatPreference;
-  const price = ctx.bookingDraft?.price || ctx.price || (flight?.price || 0);
-
-  // Helper: normalize gender to schema enum
-  const normalizeGender = (g) => {
-    if (!g) return "Other";
-    const s = String(g).trim().toLowerCase();
-    if (s.startsWith("m")) return "Male";
-    if (s.startsWith("f")) return "Female";
-    return "Other";
-  };
-
-  // Helper: infer passenger type from age
-  const inferPassengerType = (age) => {
-    const a = Number(age);
-    if (!Number.isFinite(a) || Number.isNaN(a)) return "Adult";
-    if (a < 2) return "Infant";
-    if (a <= 12) return "Child";
-    return "Adult";
-  };
-
-  // Normalize passengerData to match Booking schema:
-  // { fullName, age, gender: 'Male'|'Female'|'Other', type: 'Adult'|'Child'|'Infant' }
-  const passengerData = (Array.isArray(rawPassengers) ? rawPassengers : []).map((p, idx) => {
-    const fullName = p.fullName || p.full_name || p.name || p.fullname || `Passenger ${idx + 1}`;
-    const age = (p.age !== undefined && p.age !== null && p.age !== "") ? Number(p.age) : null;
-    const gender = normalizeGender(p.gender || p.sex || p.Gender || "");
-    const type = p.type || inferPassengerType(age);
-    return {
-      fullName,
-      age: age === null ? 0 : age, // schema requires age number; default to 0 if missing
-      gender,
-      type,
-    };
-  });
-
-  // Ensure totalAmount is present (Booking schema requires totalAmount)
-  const totalAmount = ctx.bookingDraft?.totalAmount || ctx.totalAmount || ctx.bookingDraft?.price || price * (passengerData.length || 1) || 0;
-
   try {
+    const { sessionId, paymentResult } = req.body || {};
+    if (!sessionId || !paymentResult) return res.status(400).json({ error: 'sessionId and paymentResult required' });
+    const session = sessions.get(sessionId);
+    if (!session?.bookingDraft) return res.status(400).json({ error: 'No booking draft for session' });
+    const draft = session.bookingDraft;
+
+    // If a booking exists in DB already, update it.
+    if (draft.bookingId) {
+      const booking = await Booking.findByIdAndUpdate(
+        draft.bookingId,
+        { paymentStatus: 'Paid', payment: paymentResult },
+        { new: true }
+      );
+      sessions.delete(sessionId);
+      return res.json({ reply: 'Payment confirmed. Booking completed.', booking });
+    }
+
+    // If no booking exists yet, we must have an authenticated user to create it now.
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({ error: 'Authentication required to create booking' });
+    }
+
+    // Build booking payload and create
     const bookingPayload = {
-      type: "flight",
-      item: flight?._id || flight?.id || flight?.flightId,
-      passengerData,
-      selectedSeats: ctx.selectedSeats || ctx.bookingDraft?.selectedSeats || [],
-      travelClass: ctx.travelClass || ctx.bookingDraft?.travelClass || ctx.bookingDraft?.travelClass || "Economy",
-      totalAmount,
-      paymentStatus: "Paid",
-      payment: {
-        status: paymentResult.status || "success",
-        provider: paymentResult.provider || "mock",
-        transactionId: paymentResult.transactionId || null,
-      },
+      type: 'flight',
+      user: req.user._id,
+      item: draft.flight._id,
+      passengerData: (draft.passengerData || []).map(p => ({ ...(p || {}), type: p?.type || 'adult' })),
+      selectedSeats: draft.selectedSeats || [],
+      totalAmount: draft.totalAmount || ((draft.flight?.price || 0) * (draft.passengerData?.length || 1)),
+      travelClass: draft.travelClass || 'Economy',
+      paymentStatus: 'Paid',
+      payment: paymentResult
     };
 
-    // Forward Authorization header so protected /api/bookings sees authenticated user
-    const headers = {
-      Authorization: req.headers.authorization,
-    };
-
-    const bookingResp = await axios.post("http://localhost:5000/api/bookings", bookingPayload, { headers });
-
-    ctx.step = "completed";
-    ctx.bookingId = bookingResp.data.bookingId || bookingResp.data._id || bookingResp.data.id || null;
-
-    const reply = `🎉 Booking confirmed! Booking ID: ${ctx.bookingId || bookingResp.data.bookingId || "N/A"}. You can view it in My Trips.`;
-    session.conversationHistory.push({ role: "assistant", content: reply });
-
-    return res.status(200).json({ reply, booking: bookingResp.data });
+    const booking = new Booking(bookingPayload);
+    const saved = await booking.save();
+    // mark session done
+    sessions.delete(sessionId);
+    return res.json({ reply: 'Payment confirmed. Booking completed.', booking: saved });
   } catch (err) {
-    console.error("Booking creation failed:", err.response?.data || err.message || err);
-    const msg = err.response?.data?.message || err.message || "Booking creation failed";
-    return res.status(500).json({ error: "Booking creation failed", details: msg });
+    console.error('confirmPayment error:', err);
+    return res.status(500).json({ error: 'confirmPayment failed', details: err.message });
   }
 };
+
+const SYSTEM_PROMPT = `
+You are TripNBook AI — a highly intelligent travel booking assistant.
+You help users find, compare, and book flights and hotels in a natural conversation.
+
+Your tasks:
+- Understand user intent from natural messages (e.g., "I want evening flights", "book that cheap one", "finalize AI217").
+- Extract structured info: { from_city, to_city, date, filters (price/time/airline), passengers }.
+- Maintain context: remember last city pair, date, filters, selections, and booking draft.
+- Ask for passenger details when needed: name, age, gender, seat preference.
+- Support auto-assign seats or manual seat selection. Use backend auto-assign heuristics when requested.
+- Keep booking creation strictly behind explicit user confirmation.
+- Respond naturally, friendly, and conversationally while staying concise.
+`;
 
 module.exports = { chatWithAssistant, confirmPaymentAndCreateBooking };

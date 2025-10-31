@@ -6,7 +6,8 @@ const router = express.Router();
 
 // POST /api/assistant/chat
 router.post("/chat", chatWithAssistant);
-router.post('/confirm-payment', confirmPaymentAndCreateBooking);
+router.post("/confirm", confirmPaymentAndCreateBooking);
+
 
 
 
