@@ -28,7 +28,10 @@ const Navbar = () => {
 
         {/* Actions */}
         <div className="navbar-actions">
-          <button className="navbar-btn">List Your Property</button>
+          <Link to="/assistant">
+          <button className="navbar-btn">Assistant</button>
+        </Link>
+          
             <button
               className="navbar-btn"
               onClick={() => {

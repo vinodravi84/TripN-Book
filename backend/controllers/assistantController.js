@@ -1,5 +1,5 @@
 // backend/controllers/assistantController.js
-// TripNBook AI Assistant — conversational booking agent (FIXED: booking user/type validation + guest flow)
+// TripNBook AI Assistant — conversational booking agent (ENHANCED: fuzzy city matching, richer filtering, friendly tone & suggestions)
 
 const axios = require('axios');
 const chrono = require('chrono-node');
@@ -27,8 +27,9 @@ const citiesFile = path.join(__dirname, '..', 'cities_75.json');
 let citiesMap = {};
 try { citiesMap = JSON.parse(fs.readFileSync(citiesFile, 'utf8')); } catch (e) { citiesMap = {}; }
 
-const cityList = Object.keys(citiesMap).map(c => ({ city: c, iata: citiesMap[c] })); 
-const fuse = new Fuse(cityList, { keys: ['city'], threshold: 0.35 });
+const cityList = Object.keys(citiesMap).map(c => ({ city: c, iata: citiesMap[c] }));
+// primary Fuse for fuzzy city matching (conservative)
+const fuse = new Fuse(cityList, { keys: ['city', 'iata'], threshold: 0.35, ignoreLocation: true });
 
 // in-memory sessions
 const sessions = new Map();
@@ -45,14 +46,38 @@ function parseDateFromText(text) {
   return null;
 }
 
+// Improved resolveCity with typo-tolerance and multi-strategy fallback
 function resolveCity(name) {
   if (!name) return null;
-  const trimmed = name.trim();
+  const trimmed = String(name).trim();
+  // direct IATA (3 letters)
   if (/^[A-Za-z]{3}$/.test(trimmed)) return { city: trimmed.toUpperCase(), iata: trimmed.toUpperCase() };
+
+  // direct exact match (case-insensitive)
   const exact = Object.keys(citiesMap).find(k => k.toLowerCase() === trimmed.toLowerCase());
   if (exact) return { city: exact, iata: citiesMap[exact] };
-  const r = fuse.search(trimmed);
-  if (r.length > 0) return { city: r[0].item.city, iata: r[0].item.iata };
+
+  // try Fuse conservative
+  let r = fuse.search(trimmed, { limit: 1 });
+  if (r && r.length) return { city: r[0].item.city, iata: r[0].item.iata };
+
+  // try looser fuse (more tolerant for typos)
+  const looseFuse = new Fuse(cityList, { keys: ['city', 'iata'], threshold: 0.6, ignoreLocation: true });
+  r = looseFuse.search(trimmed, { limit: 1 });
+  if (r && r.length) return { city: r[0].item.city, iata: r[0].item.iata };
+
+  // try tokenized matching: pick best match for each token (useful when users type "chenai" or partial)
+  const tokens = trimmed.split(/[^A-Za-z]+/).filter(Boolean);
+  for (const t of tokens) {
+    const s = fuse.search(t, { limit: 1 });
+    if (s && s.length) return { city: s[0].item.city, iata: s[0].item.iata };
+  }
+
+  // last resort: do a fuzzy substring lookup
+  const lower = trimmed.toLowerCase();
+  const candidate = cityList.find(c => c.city.toLowerCase().includes(lower) || (c.iata && c.iata.toLowerCase().includes(lower)));
+  if (candidate) return { city: candidate.city, iata: candidate.iata };
+
   return null;
 }
 
@@ -123,12 +148,45 @@ function applyFilters(results, text) {
   if (!Array.isArray(results)) return [];
   let filtered = [...results];
   const lower = (text || '').toLowerCase();
-  const timeWordsPresent = /\b(morning|evening|after|before|am|pm|:\d{2})\b/.test(lower);
-  if (timeWordsPresent) filtered = filtered.filter(f => flightDepartureHour(f) !== null);
-  if (/\b(cheap|cheapest|lowest|budget|sort by price)\b/.test(lower)) filtered.sort((a, b) => (a.price || 0) - (b.price || 0));
-  const timeTokenMatch = lower.match(/\b([0-2]?\d(?::[0-5]\d)?\s*(?:am|pm))\b/i);
+
+  // Budget parsing: "under 5000", "below ₹4000", "5000-8000"
+  const moneyClean = s => Number(String(s).replace(/[₹,\s]/g, ''));
+  const underMatch = lower.match(/(?:under|below|less than|<)\s*₹?\s*([0-9,]+)/i);
+  const rangeMatch = lower.match(/₹?\s*([0-9,]+)\s*(?:-|to|–)\s*₹?\s*([0-9,]+)/i);
+  if (underMatch) {
+    const limit = moneyClean(underMatch[1]);
+    filtered = filtered.filter(f => (f.price || Infinity) <= limit);
+  }
+  if (rangeMatch) {
+    const a = moneyClean(rangeMatch[1]);
+    const b = moneyClean(rangeMatch[2]);
+    const low = Math.min(a, b), high = Math.max(a, b);
+    filtered = filtered.filter(f => (f.price || Infinity) >= low && (f.price || 0) <= high);
+  }
+
+  // earliest/immediate/soon -> sort by departure time ascending
+  if (/\b(earliest|immediate|asap|soon|now|today|tonight)\b/.test(lower)) {
+    filtered.sort((a, b) => {
+      const ah = flightDepartureHour(a); const bh = flightDepartureHour(b);
+      if (ah === null && bh === null) return 0;
+      if (ah === null) return 1;
+      if (bh === null) return -1;
+      return ah - bh;
+    });
+  }
+
+  // "cheapest" or explicit price-sort
+  if (/\b(cheap|cheapest|lowest|budget|sort by price)\b/.test(lower)) {
+    filtered.sort((a, b) => (a.price || 0) - (b.price || 0));
+  }
+
+  // morning/evening filtering
   const hasEvening = /\bevening\b/.test(lower);
   const hasMorning = /\bmorning\b/.test(lower);
+  if (hasEvening) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh >= 17; });
+  if (hasMorning) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh < 12; });
+
+  // before/after specific time
   const afterMatch = lower.match(/\bafter\s+([0-2]?\d(?::[0-5]\d)?\s*(?:am|pm)?)\b/);
   if (afterMatch) {
     const parsed = parseHourFromString(afterMatch[1]);
@@ -139,21 +197,19 @@ function applyFilters(results, text) {
     const parsed = parseHourFromString(beforeMatch[1]);
     if (parsed) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh <= parsed.hour; });
   }
-  if (timeTokenMatch && (hasEvening || hasMorning)) {
-    const parsed = parseHourFromString(timeTokenMatch[1]);
-    if (parsed) {
-      if (hasEvening) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh >= Math.max(parsed.hour, 17); });
-      else if (hasMorning) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh < Math.min(parsed.hour + 1, 12); });
-    }
-  } else if (hasEvening) {
-    filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh >= 17; });
-  } else if (hasMorning) {
-    filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh < 12; });
+
+  // by airline e.g. "only indigo" or "no spicejet"
+  const onlyMatch = lower.match(/\bonly\s+([a-zA-Z ]+)/);
+  if (onlyMatch) {
+    const an = onlyMatch[1].trim();
+    filtered = filtered.filter(f => (f.airline || '').toLowerCase().includes(an));
   }
-  if (timeTokenMatch && !afterMatch && !beforeMatch && !hasEvening && !hasMorning) {
-    const parsed = parseHourFromString(timeTokenMatch[1]);
-    if (parsed) filtered = filtered.filter(f => { const fh = flightDepartureHour(f); return fh !== null && fh >= parsed.hour; });
+  const notMatch = lower.match(/\bno\s+([a-zA-Z ]+)/);
+  if (notMatch) {
+    const an = notMatch[1].trim();
+    filtered = filtered.filter(f => !((f.airline || '').toLowerCase().includes(an)));
   }
+
   return filtered;
 }
 
@@ -213,7 +269,7 @@ function detectSeatFlowChoice(text) {
   if (!text) return null;
   const lower = text.toLowerCase();
   if (/\b(auto|auto-assign|auto assign|assign seats|assign them|assign)\b/.test(lower)) return 'auto';
-  if (/\b(i(\'?ll choose| will choose)|i will pick|i'll pick|i want to pick|manual|choose myself|pick seats|choose seats|select seats)\b/.test(lower)) return 'manual';
+  if (/\b(i('??ll choose| will choose)|i will pick|i'll pick|i want to pick|manual|choose myself|pick seats|choose seats|select seats)\b/.test(lower)) return 'manual';
   return null;
 }
 
@@ -313,6 +369,44 @@ function advancedAssignSeats(flight, passengerData = [], bookedSeats = [], trave
   return assigned;
 }
 
+// ---------- Friendly tone helper ----------
+function friendlyReply(text) {
+  if (!text) return text;
+  // a small wrapper to make assistant replies sound friendlier
+  return `${text.trim()} \n\nIf you want, I can suggest the best option — just ask "what do you think?"`;
+}
+
+// ---------- Simple suggestions/advice ----------
+function suggestFlightAdvice(results) {
+  if (!Array.isArray(results) || results.length === 0) return null;
+  // cheapest
+  let cheapest = null;
+  for (const f of results) {
+    if (!cheapest || (f.price || Infinity) < (cheapest.price || Infinity)) cheapest = f;
+  }
+  // earliest
+  let earliest = null;
+  for (const f of results) {
+    const h = flightDepartureHour(f);
+    if (h !== null && (earliest === null || h < flightDepartureHour(earliest))) earliest = f;
+  }
+  // balanced: moderate price and reasonable departure (heuristic)
+  const priced = results.filter(r => typeof r.price === 'number');
+  const medianPrice = priced.length ? priced.sort((a,b)=>a.price-b.price)[Math.floor(priced.length/2)].price : null;
+  let balanced = null;
+  if (medianPrice !== null) {
+    balanced = results.reduce((best, f) => {
+      const scorePrice = 1 - Math.abs((f.price || medianPrice) - medianPrice) / (medianPrice || 1);
+      const dh = flightDepartureHour(f); const scoreTime = dh === null ? 0.5 : (1 - Math.abs(dh - 12) / 12);
+      const score = (scorePrice * 0.6) + (scoreTime * 0.4);
+      return (!best || score > best.score) ? { flight: f, score } : best;
+    }, null);
+    balanced = balanced?.flight || null;
+  }
+
+  return { cheapest, earliest, balanced };
+}
+
 // ---------- LLM support ----------
 async function callLLMForHelp(systemPrompt, userText, context = {}) {
   if (!OPENROUTER_KEY) return null;
@@ -344,9 +438,9 @@ const chatWithAssistant = async (req, res) => {
     const lower = msg.toLowerCase();
     session.history.push({ role: 'user', content: msg });
 
-    // greetings
+    // friendly greetings
     if (/^(hi|hello|hey)\b/i.test(lower)) {
-      const reply = "Hi — TripNBook AI here. I'll help you find and book flights step-by-step. Try: 'Find flights from Chennai to Delhi this Sunday.'";
+      const reply = "Hey! I'm TripNBook — your travel buddy. Tell me where you'd like to go (e.g. 'Flights from Chennai to Delhi this Sunday').";
       session.history.push({ role: 'assistant', content: reply });
       return res.json({ reply, sessionId: session.id });
     }
@@ -354,7 +448,7 @@ const chatWithAssistant = async (req, res) => {
     // reset
     if (/^(reset|start over|clear chat)/i.test(lower)) {
       sessions.delete(session.id);
-      const reply = 'Session cleared. Start a new search when ready.';
+      const reply = 'All set — I cleared the session. Ready when you are!';
       return res.json({ reply, sessionId: session.id });
     }
 
@@ -366,12 +460,35 @@ const chatWithAssistant = async (req, res) => {
       session.selectedFlight = null;
       session.bookingDraft = null;
       session.lastSearchResults = session.lastSearchResults || [];
-      const reply = 'Okay — booking cancelled. You can start a new search when ready.';
+      const reply = 'Alright — booking cancelled. Want me to search again or suggest something else?';
       session.history.push({ role: 'assistant', content: reply });
       return res.json({ reply, sessionId: session.id });
     }
 
-    // CRITICAL FIX: Check if we're in booking flow stages
+    // detect conversational suggestion requests
+    if (/\b(what do you think|any suggestions|recommend|which should i pick|help me choose|which is better)\b/i.test(lower)) {
+      if (session.lastSearchResults && session.lastSearchResults.length) {
+        const advice = suggestFlightAdvice(session.lastSearchResults);
+        if (!advice) {
+          const reply = `I don't have enough info to pick a winner — but I can sort by price or time if you want.`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id });
+        }
+        const parts = [];
+        if (advice.cheapest) parts.push(`Cheapest: ✈️ ${advice.cheapest.airline} ${advice.cheapest.flightNumber} — ₹${advice.cheapest.price}`);
+        if (advice.earliest) parts.push(`Earliest departure: ✈️ ${advice.earliest.airline} ${advice.earliest.flightNumber} — departs ${advice.earliest.departureTime}`);
+        if (advice.balanced) parts.push(`Good balance: ✈️ ${advice.balanced.airline} ${advice.balanced.flightNumber} — ₹${advice.balanced.price || 'N/A'}`);
+        const reply = `Here are my suggestions:\n${parts.join('\n')}.\n\nIf you want, I can highlight only the cheapest or earliest flights — say 'show cheapest' or 'show earliest'.`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
+      } else {
+        const reply = `Not searching anything right now — tell me a route (for example: 'Flights from Chennai to Kolkata tomorrow'), and I'll suggest the best options.`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
+      }
+    }
+
+    // CRITICAL Fix: Check if we're in booking flow stages
     const inBookingFlow = Boolean(session.bookingDraft?.stage);
     const hasSelectedFlightAwaitingCount = Boolean(session.selectedFlight && !session.bookingDraft);
 
@@ -382,7 +499,7 @@ const chatWithAssistant = async (req, res) => {
 
     if (finaliseRegex.test(lower) && !explicitBookCode && !numericOnly && session.selectedFlight && !inBookingFlow) {
       const chosen = session.selectedFlight;
-      const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect each passenger's name, age, and gender one-by-one.`;
+      const reply = `Nice choice — ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers are traveling? Reply with a number and I'll collect details.`;
       session.history.push({ role: 'assistant', content: reply });
       return res.json({ reply, sessionId: session.id });
     }
@@ -393,7 +510,7 @@ const chatWithAssistant = async (req, res) => {
         const chosen = session.lastSearchResults.find(f => (f.flightNumber || '').toLowerCase() === code.toLowerCase());
         if (chosen) {
           session.selectedFlight = chosen;
-          const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
+          const reply = `You picked ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers?`;
           session.history.push({ role: 'assistant', content: reply });
           return res.json({ reply, sessionId: session.id });
         }
@@ -442,7 +559,7 @@ const chatWithAssistant = async (req, res) => {
         session.history.push({ role: 'assistant', content: reply });
         return res.json({ reply, sessionId: session.id });
       }
-      if (/\b(evening|morning|after|before|am|pm)\b/.test(lower)) {
+      if (/\b(evening|morning|after|before|am|pm|earliest|immediate|soon|today|tonight)\b/.test(lower)) {
         session.lastSearchResults = filtered;
         const reply = filtered.length ? `Here are filtered flights:\n\n${formatFlightsShort(filtered)}` : "No flights found matching that filter.";
         session.history.push({ role: 'assistant', content: reply });
@@ -809,12 +926,27 @@ const chatWithAssistant = async (req, res) => {
     if (pairMatch) {
       const a = pairMatch[1];
       const b = pairMatch[2];
-      from = resolveCity(a);
-      to = resolveCity(b);
+      from = resolveCity(a) || from;
+      to = resolveCity(b) || to;
     }
+
+    // extra attempt: if we still don't have both cities, try to pull city-like tokens and fuzzy-match them
     if (!from || !to) {
+      const tokens = msg.split(/[,\.\?\!\-\n\s]+/).filter(Boolean).slice(0, 12);
+      const matches = [];
+      for (const t of tokens) {
+        const r = resolveCity(t);
+        if (r) matches.push(r);
+      }
+      // pick first two distinct matches
+      if (!from && matches[0]) from = matches[0];
+      if (!to && matches.find(m => m.iata !== (from && from.iata))) to = matches.find(m => m.iata !== (from && from.iata)) || to;
+    }
+
+    if (!from || !to) {
+      // ask LLM as fallback but with friendlier prompt and hint about typos
       const llmHelp = await callLLMForHelp(SYSTEM_PROMPT, msg, session.context);
-      const reply = llmHelp || "I couldn't detect both origin and destination. Try: 'Flights from Chennai to Kolkata on Sunday'.";
+      const reply = llmHelp || "I couldn't detect both origin and destination — maybe a small typo? Try: 'Flights from Chennai to Kolkata on Sunday'. You can also type airport codes like BLR or DEL.";
       session.history.push({ role: 'assistant', content: reply });
       return res.json({ reply, sessionId: session.id });
     }
@@ -825,7 +957,7 @@ const chatWithAssistant = async (req, res) => {
     }).lean();
     
     if (!flights.length) {
-      const reply = `No flights found from ${from.city} to ${to.city}.`;
+      const reply = `I couldn't find any flights from ${from.city} to ${to.city}. Want me to search nearby dates or show flights from a nearby airport?`;
       session.history.push({ role: 'assistant', content: reply });
       return res.json({ reply, sessionId: session.id });
     }
@@ -865,7 +997,7 @@ const confirmPaymentAndCreateBooking = async (req, res) => {
     }
 
     // If no booking exists yet, we must have an authenticated user to create it now.
-    if (!req.user || !req.user._id) {
+    if (!req.user || !req.user._1) {
       return res.status(401).json({ error: 'Authentication required to create booking' });
     }
 
