@@ -107,7 +107,7 @@ exports.createBooking = async (req, res) => {
   session.startTransaction();
   try {
     const userId = req.user?._id || req.user?.id;
-    const { type, item, passengerData = [], selectedSeats = [], travelClass, totalAmount } = req.body;
+    const { type, item, passengerData = [], selectedSeats = [], travelClass, totalAmount, travelDate } = req.body;
 
     if (!userId) return res.status(401).json({ message: 'Unauthorized' });
     if (!type || !item) return res.status(400).json({ message: 'Missing type or item' });
@@ -173,6 +173,7 @@ exports.createBooking = async (req, res) => {
         travelClass,
         totalAmount: computedTotal,
         paymentStatus: 'Paid',
+        travelDate: travelDate ? new Date(travelDate) : null,
       }], { session });
 
       await session.commitTransaction();

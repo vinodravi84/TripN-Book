@@ -23,6 +23,7 @@ const SeatBooking = () => {
     passengerData = [],
     selectedSeats: preAssignedSeats = [],
     allowManualSelect = false,
+    departureDate,
     booking // optional draft
   } = state || {};
 
@@ -110,7 +111,8 @@ const SeatBooking = () => {
         flight,
         passengerData,
         travelClass,
-        selectedSeats
+        selectedSeats,
+        departureDate
       };
     } else {
       draft.selectedSeats = selectedSeats;

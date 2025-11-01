@@ -17,6 +17,7 @@ const bookingSchema = new mongoose.Schema(
     travelClass: { type: String, default: 'Economy' },
     totalAmount: { type: Number, required: true },
     paymentStatus: { type: String, enum: ['Paid', 'Pending'], default: 'Paid' },
+    travelDate: { type: Date, required: false },
     date: { type: Date, default: Date.now },
   },
   { timestamps: true }

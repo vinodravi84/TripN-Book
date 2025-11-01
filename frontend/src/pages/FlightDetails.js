@@ -14,6 +14,7 @@ const FlightDetails = () => {
   const travelClass = state?.travelClass || 'Economy';
   const fareType    = state?.fareType    || 'regular';
   const totalPax    = adults + children + infants;
+  const departureDate = state?.departureDate;
 
   return (
     <div className="details-page">
@@ -101,7 +102,7 @@ const FlightDetails = () => {
             state: {
               flight: f,
               adults, children, infants,
-              travelClass, fareType
+              travelClass, fareType,departureDate
             }
           })}
         >

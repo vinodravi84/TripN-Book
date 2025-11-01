@@ -29,7 +29,8 @@ const PassengerForm = () => {
     children = 0,
     infants = 0,
     travelClass = 'Economy',
-    fareType
+    fareType,
+    departureDate
   } = state || {};
 
   const totalPassengers = Math.max(1, adults + children + infants);
@@ -186,6 +187,7 @@ const PassengerForm = () => {
       passengerData,
       travelClass,
       fareType,
+      departureDate,
       selectedSeats: []
     };
 

@@ -12,6 +12,7 @@ const FlightResults = () => {
   const infants     = state?.infants   || 0;
   const travelClass = state?.travelClass || 'Economy';
   const fareType    = state?.fareType  || 'regular';
+  const departureDate=state?.departureDate;
 
   const totalPax = adults + children + infants;
   const classMultipliers = { Economy: 1, Business: 2, First: 3 };
@@ -83,7 +84,7 @@ const FlightResults = () => {
                   state: {
                     flight: f,
                     adults, children, infants,
-                    travelClass, fareType
+                    travelClass, fareType,departureDate
                   }
                 })}
               >

@@ -128,7 +128,7 @@ const FlightSearchBox = () => {
         state: {
           flights: data,
           adults, children, infants,
-          travelClass, fareType
+          travelClass, fareType,departureDate
         }
       });
     } catch (e) {

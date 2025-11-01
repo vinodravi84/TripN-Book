@@ -9,6 +9,7 @@ import '../styles/Payment.css';
  * - Accepts booking draft from route state or localStorage
  * - Shows passenger name / age / gender / seat info
  * - Calls assistant confirm endpoint (or fallback /bookings)
+ * - Now includes travelDate (departureDate) + returnDate for round trips
  */
 
 const Payment = () => {
@@ -21,14 +22,20 @@ const Payment = () => {
 
   useEffect(() => {
     if (state && (state.booking || state.flight)) {
-      setBookingDraft(state.booking || {
-        flight: state.flight,
+      // Construct booking draft with all relevant fields
+      setBookingDraft({
+        flight: state.flight || state.booking?.flight,
         passengerData: state.passengerData || state.passengers || [],
-        travelClass: state.travelClass,
-        selectedSeats: state.selectedSeats || state.selectedSeats || [],
+        travelClass: state.travelClass || 'Economy',
+        selectedSeats: state.selectedSeats || [],
+        departureDate: state.departureDate || state.travelDate || '',
+        returnDate: state.returnDate || '',
+        tripType: state.tripType || 'oneway',
       });
       return;
     }
+
+    // fallback: localStorage
     const draft = localStorage.getItem('bookingDraft');
     if (draft) setBookingDraft(JSON.parse(draft));
   }, [state]);
@@ -39,6 +46,7 @@ const Payment = () => {
       navigate('/login');
       return;
     }
+
     if (!bookingDraft) {
       alert('Missing booking draft. Please restart booking flow.');
       navigate('/');
@@ -47,16 +55,20 @@ const Payment = () => {
 
     setProcessing(true);
     try {
+      // Simulate payment success
       const paymentResult = {
         status: 'success',
         provider: 'mock',
         transactionId: 'TXN-' + Date.now(),
       };
 
+      // Try AI Assistant confirm route first
       try {
         const payload = {
           sessionId: localStorage.getItem('aiSessionId'),
           paymentResult,
+          travelDate: bookingDraft.departureDate,
+          returnDate: bookingDraft.returnDate,
         };
         const res = await api.post('/assistant/confirm-payment', payload);
         const booking = res.data.booking || res.data;
@@ -70,16 +82,20 @@ const Payment = () => {
           navigate('/login');
           return;
         }
-        console.warn('Assistant confirm failed, falling back to direct /bookings:', assistErr?.response?.data || assistErr.message);
+        console.warn('Assistant confirm failed, falling back to /bookings:', assistErr?.response?.data || assistErr.message);
       }
 
+      // Direct fallback: create booking manually
       const bookingPayload = {
         type: 'flight',
         item: bookingDraft.flight?._id || bookingDraft.flight?.id,
         passengerData: bookingDraft.passengerData || [],
         selectedSeats: bookingDraft.selectedSeats || [],
-        travelClass: bookingDraft.travelClass || 'economy',
+        travelClass: bookingDraft.travelClass || 'Economy',
         totalAmount: (bookingDraft.flight?.price || 0) * (bookingDraft.passengerData?.length || 1),
+        travelDate: bookingDraft.departureDate || new Date().toISOString().split('T')[0],
+        returnDate: bookingDraft.returnDate || null,
+        tripType: bookingDraft.tripType || 'oneway',
       };
 
       const res = await api.post('/bookings', bookingPayload);
@@ -111,17 +127,36 @@ const Payment = () => {
     );
   }
 
-  const { flight, passengerData = [], travelClass = 'Economy', selectedSeats = [] } = bookingDraft;
+  const {
+    flight,
+    passengerData = [],
+    travelClass = 'Economy',
+    selectedSeats = [],
+    departureDate,
+    returnDate,
+    tripType,
+  } = bookingDraft;
 
   return (
     <div className="payment-container">
       <h2>Payment Summary</h2>
 
       <div className="payment-details">
-        <p><strong>Flight:</strong> {flight?.flightNumber} ({flight?.departureCity || flight?.from} → {flight?.arrivalCity || flight?.to})</p>
+        <p>
+          <strong>Flight:</strong>{' '}
+          {flight?.flightNumber} ({flight?.departureCity || flight?.from} → {flight?.arrivalCity || flight?.to})
+        </p>
         <p><strong>Class:</strong> {travelClass}</p>
-        <p><strong>Seats:</strong> {(selectedSeats && selectedSeats.length) ? selectedSeats.join(', ') : 'Not selected'}</p>
-        <p><strong>Total Passengers:</strong> {passengerData?.length || 1}</p>
+        <p><strong>Trip Type:</strong> {tripType === 'round' ? 'Round Trip' : 'One Way'}</p>
+        <p><strong>Departure Date:</strong> {departureDate || 'N/A'}</p>
+        {tripType === 'round' && (
+          <p><strong>Return Date:</strong> {returnDate || 'N/A'}</p>
+        )}
+        <p>
+          <strong>Seats:</strong>{' '}
+          {selectedSeats.length ? selectedSeats.join(', ') : 'Not selected'}
+        </p>
+        <p><strong>Total Passengers:</strong> {passengerData.length || 1}</p>
         <p><strong>Total Price:</strong> ₹{(flight?.price || 0) * (passengerData?.length || 1)}</p>
       </div>
 
@@ -130,7 +165,8 @@ const Payment = () => {
         <ul>
           {passengerData.map((p, i) => (
             <li key={i}>
-              <strong>{p.fullName}</strong> — Age: {p.age} — Gender: {p.gender} — Seat: {(selectedSeats && selectedSeats[i]) || 'TBD'}
+              <strong>{p.fullName}</strong> — Age: {p.age} — Gender: {p.gender} — Seat:{' '}
+              {selectedSeats[i] || 'TBD'}
             </li>
           ))}
         </ul>
