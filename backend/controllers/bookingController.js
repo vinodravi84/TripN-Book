@@ -173,7 +173,26 @@ exports.createBooking = async (req, res) => {
         ? totalAmount
         : ((flightDoc.price || 0) * Math.max(1, sanitizedPassengers.length));
 
-      const existingBookings = await Booking.find({ item }).select('selectedSeats').lean();
+      // Build query for seat conflict detection
+      const conflictQuery = { item, type: 'flight' };
+
+      // Add travel date filtering for conflict detection
+      if (travelDate) {
+        const date = new Date(travelDate);
+        if (!isNaN(date.getTime())) {
+          const startOfDay = new Date(date);
+          startOfDay.setHours(0, 0, 0, 0);
+          const endOfDay = new Date(date);
+          endOfDay.setHours(23, 59, 59, 999);
+
+          conflictQuery.travelDate = {
+            $gte: startOfDay,
+            $lte: endOfDay
+          };
+        }
+      }
+
+      const existingBookings = await Booking.find(conflictQuery).select('selectedSeats').lean();
       const existingSeats = flatten(existingBookings.map(b => b.selectedSeats || []));
 
       const conflicts = (selectedSeats || []).filter(s => existingSeats.includes(s));
