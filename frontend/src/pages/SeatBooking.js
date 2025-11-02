@@ -4,7 +4,7 @@ import api, { setAuthToken } from '../services/api';
 import { aircraftLayouts } from '../utils/aircraftLayouts';
 import LoadingSpinner, { SeatMapLoader } from '../components/LoadingSpinner';
 import { SeatBookingErrorBoundary } from '../components/ErrorBoundary';
-import '../styles/SeatBooking.css';
+import '../styles/SeatBookingEnhanced.css';
 import aircraftImage from '../styles/assets/aircraft-topview.png';
 
 /**
