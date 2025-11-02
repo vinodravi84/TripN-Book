@@ -33,8 +33,7 @@ const cityList = Object.keys(citiesMap).map(c => ({ city: c, iata: citiesMap[c] 
 // primary Fuse for fuzzy city matching (conservative)
 const fuse = new Fuse(cityList, { keys: ['city', 'iata'], threshold: 0.35, ignoreLocation: true });
 
-// in-memory sessions
-const sessions = new Map();
+// Database-backed session management
 
 // ----------------- Helpers -----------------
 function parseDateFromText(text) {
