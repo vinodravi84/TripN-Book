@@ -131,6 +131,22 @@ exports.createBooking = async (req, res) => {
     if (!userId) return res.status(401).json({ message: 'Unauthorized' });
     if (!type || !item) return res.status(400).json({ message: 'Missing type or item' });
 
+    // Validate travelDate for flight bookings with seats
+    if (type === 'flight' && selectedSeats && selectedSeats.length > 0) {
+      if (!travelDate) {
+        return res.status(400).json({ message: 'Travel date is required when selecting seats' });
+      }
+      const date = new Date(travelDate);
+      if (isNaN(date.getTime())) {
+        return res.status(400).json({ message: 'Invalid travelDate format. Use ISO date string.' });
+      }
+      // Ensure travel date is not in the past
+      const now = new Date();
+      if (date < now.setHours(0, 0, 0, 0)) {
+        return res.status(400).json({ message: 'Travel date cannot be in the past' });
+      }
+    }
+
     // --- sanitize & normalize passengerData to match schema enums ---
     const normalizeType = (t) => {
       if (!t) return 'Adult';
