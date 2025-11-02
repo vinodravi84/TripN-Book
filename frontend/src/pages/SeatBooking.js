@@ -42,23 +42,29 @@ const SeatBooking = () => {
   useEffect(() => {
     const fetchBookedSeats = async () => {
       if (!flight?._id) return;
+
+      // Validate departureDate
+      if (!departureDate) {
+        setBookedError('Travel date is missing. Please go back and select a departure date.');
+        return;
+      }
+
       setLoadingBooked(true);
       setBookedError('');
       try {
         let apiUrl = `/bookings/booked-seats/${flight._id}?travelClass=${encodeURIComponent(travelClass)}`;
 
-        // Add travelDate parameter if available
-        if (departureDate) {
-          const formattedDate = new Date(departureDate).toISOString().split('T')[0];
-          apiUrl += `&travelDate=${encodeURIComponent(formattedDate)}`;
-        }
+        // Add travelDate parameter
+        const formattedDate = new Date(departureDate).toISOString().split('T')[0];
+        apiUrl += `&travelDate=${encodeURIComponent(formattedDate)}`;
 
         const res = await api.get(apiUrl);
         const seats = res.data?.bookedSeats || [];
         setBookedSeats(Array.isArray(seats) ? seats : []);
       } catch (err) {
         console.error('Failed to fetch booked seats:', err);
-        setBookedError('Failed to load booked seats. Some seats may be shown as available.');
+        const errorMessage = err.response?.data?.message || 'Failed to load booked seats. Some seats may be shown as available.';
+        setBookedError(errorMessage);
       } finally {
         setLoadingBooked(false);
       }
