@@ -154,7 +154,7 @@ const AIAssistant = () => {
     setLoading(true);
 
     try {
-      const res = await axios.post("http://localhost:5000/api/assistant/chat", {
+      const res = await axios.post("https://tripnbook.onrender.com/api/assistant/chat", {
         message: messageText,
         sessionId,
       });
