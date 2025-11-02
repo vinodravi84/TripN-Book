@@ -820,7 +820,7 @@ const chatWithAssistant = async (req, res) => {
           draft.seatFlow = 'auto';
           draft.stage = 'seat_assignment';
           session.bookingDraft = draft;
-          sessions.set(session.id, session);
+          await saveSession(session);
 
           const allBookings = await Booking.find({ item: session.selectedFlight._id }).lean().select('selectedSeats') || [];
           const bookedSeats = [];
@@ -836,7 +836,7 @@ const chatWithAssistant = async (req, res) => {
             // Not yet saved to DB; only ready after explicit confirm
             draft.readyForPayment = false;
             session.bookingDraft = draft;
-            sessions.set(session.id, session);
+            await saveSession(session);
 
             const seatAssignments = draft.passengerData.map((p, i) => `${p.fullName}: **${assigned[i]}**`).join('\n');
             const reply = `I've assigned seats:\n${seatAssignments}\n\nTotal: **₹${draft.totalAmount}**\n\nReply **confirm** to proceed to payment, or **change seats** to pick manually.`;
@@ -846,7 +846,7 @@ const chatWithAssistant = async (req, res) => {
             draft.seatFlow = 'manual';
             draft.stage = 'collect_manual_choice';
             session.bookingDraft = draft;
-            sessions.set(session.id, session);
+            await saveSession(session);
 
             const reply = `I couldn't auto-assign perfect seats. Reply **choose seats** to pick manually.`;
             session.history.push({ role: 'assistant', content: reply });
@@ -858,7 +858,7 @@ const chatWithAssistant = async (req, res) => {
           draft.seatFlow = 'manual';
           draft.stage = 'collect_manual_choice';
           session.bookingDraft = draft;
-          sessions.set(session.id, session);
+          await saveSession(session);
 
           const reply = `Okay — reply **choose seats** to open seat selection.`;
           session.history.push({ role: 'assistant', content: reply });
@@ -910,7 +910,7 @@ const chatWithAssistant = async (req, res) => {
             draft.totalAmount = totalAmount;
             draft.readyForPayment = true;
             session.bookingDraft = draft;
-            sessions.set(session.id, session);
+            await saveSession(session);
 
             const navData = { path: '/payment', state: { booking: draft } };
             const reply = `Booking created! Total: ₹${totalAmount}\nRedirecting to payment...`;
@@ -922,7 +922,7 @@ const chatWithAssistant = async (req, res) => {
             draft.readyForPayment = true;
             draft.bookingId = null;
             session.bookingDraft = draft;
-            sessions.set(session.id, session);
+            await saveSession(session);
 
             const navData = { path: '/payment', state: { booking: draft } };
             const reply = `You're almost done — please log in to complete payment. Redirecting to payment...`;
