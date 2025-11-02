@@ -74,17 +74,36 @@ exports.getBookings = async (req, res) => {
 
 /**
  * GET /api/bookings/booked-seats/:flightId
- * Returns unique booked seat IDs for a flight.
+ * Returns unique booked seat IDs for a flight, optionally filtered by travel date.
  */
 exports.getBookedSeats = async (req, res) => {
   try {
     const { flightId } = req.params;
-    const { travelClass } = req.query; // optional
+    const { travelClass, travelDate } = req.query; // both optional
 
     if (!flightId) return res.status(400).json({ message: 'Flight ID required' });
 
     const query = { item: flightId, type: 'flight' };
     if (travelClass) query.travelClass = travelClass;
+
+    // Add travel date filtering if provided
+    if (travelDate) {
+      const date = new Date(travelDate);
+      if (isNaN(date.getTime())) {
+        return res.status(400).json({ message: 'Invalid travelDate format. Use ISO date string.' });
+      }
+
+      // Create date range for the specific travel date (start of day to end of day)
+      const startOfDay = new Date(date);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(date);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      query.travelDate = {
+        $gte: startOfDay,
+        $lte: endOfDay
+      };
+    }
 
     const bookings = await Booking.find(query).select('selectedSeats').lean();
 
