@@ -97,21 +97,38 @@ const SeatBooking = () => {
   // helper to determine if this seat is pre-assigned (locked)
   const preAssignedSet = new Set(preAssignedSeats || []);
 
-  const toggleSeat = (seatId, classKey) => {
+  const toggleSeat = useCallback((seatId, classKey) => {
     if (classKey !== selectedClassKey) return;
     if (bookedSeats.includes(seatId)) return;
     if (preAssignedSet.has(seatId)) return; // locked
+
+    // Add animation
+    setAnimatingSeats(prev => new Set(prev).add(seatId));
+    setTimeout(() => {
+      setAnimatingSeats(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(seatId);
+        return newSet;
+      });
+    }, 300);
 
     if (selectedSeats.includes(seatId)) {
       setSelectedSeats(prev => prev.filter(s => s !== seatId));
     } else {
       setSelectedSeats(prev => {
         if (prev.length < seatCountNeeded) return [...prev, seatId];
-        alert(`You can only select ${seatCountNeeded} seats`);
+        // Show a more user-friendly message
+        const seatElement = document.querySelector(`[data-seat-id="${seatId}"]`);
+        if (seatElement) {
+          seatElement.classList.add('seat-shake');
+          setTimeout(() => {
+            seatElement.classList.remove('seat-shake');
+          }, 500);
+        }
         return prev;
       });
     }
-  };
+  }, [selectedClassKey, bookedSeats, preAssignedSet, selectedSeats, seatCountNeeded]);
 
   const handleConfirm = () => {
     // If preAssigned seats exist and equals passengers, accept them even if not changed
