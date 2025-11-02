@@ -8,6 +8,8 @@ const path = require('path');
 const fs = require('fs');
 const Flight = require('../models/Flight');
 const Booking = require('../models/Booking');
+const Session = require('../models/Session');
+const UserProfile = require('../models/UserProfile');
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
