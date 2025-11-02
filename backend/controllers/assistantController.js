@@ -1067,7 +1067,7 @@ const confirmPaymentAndCreateBooking = async (req, res) => {
         { paymentStatus: 'Paid', payment: paymentResult },
         { new: true }
       );
-      sessions.delete(sessionId);
+      await deleteSession(sessionId);
       return res.json({ reply: 'Payment confirmed. Booking completed.', booking });
     }
 
