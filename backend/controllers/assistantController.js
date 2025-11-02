@@ -625,7 +625,7 @@ const chatWithAssistant = async (req, res) => {
 
     // friendly greetings
     if (/^(hi|hello|hey)\b/i.test(lower)) {
-      const reply = "Hey! I'm TripNBook — your travel buddy. Tell me where you'd like to go (e.g. 'Flights from Chennai to Delhi this Sunday').";
+      const reply = "Hey! I'm TripNBook — your travel buddy. I can help you find flights, hotels, or both! Tell me where you'd like to go (e.g. 'Flights from Chennai to Delhi this Sunday' or 'Hotels in Mumbai for this weekend').";
       session.history.push({ role: 'assistant', content: reply });
       return res.json({ reply, sessionId: session.id });
     }
