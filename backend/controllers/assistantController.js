@@ -1092,7 +1092,7 @@ const confirmPaymentAndCreateBooking = async (req, res) => {
     const booking = new Booking(bookingPayload);
     const saved = await booking.save();
     // mark session done
-    sessions.delete(sessionId);
+    await deleteSession(sessionId);
     return res.json({ reply: 'Payment confirmed. Booking completed.', booking: saved });
   } catch (err) {
     console.error('confirmPayment error:', err);
