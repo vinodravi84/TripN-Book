@@ -1,7 +1,7 @@
 // src/services/api.js
 import axios from 'axios';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_BASE = process.env.REACT_APP_API_URL || 'https://tripnbook.onrender.com';
 const API_URL = `${API_BASE}/api`;
 
 // default axios instance exported as default
