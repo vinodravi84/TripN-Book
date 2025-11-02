@@ -710,7 +710,7 @@ const chatWithAssistant = async (req, res) => {
         draft.stage = 'collect_age';
 
         session.bookingDraft = draft;
-        sessions.set(session.id, session);
+        await saveSession(session);
 
         const reply = `Got it — name: **${name}**. Now please provide age for passenger #${idx + 1} (e.g., "29").`;
         session.history.push({ role: 'assistant', content: reply });
@@ -736,7 +736,7 @@ const chatWithAssistant = async (req, res) => {
         draft.stage = 'collect_gender';
 
         session.bookingDraft = draft;
-        sessions.set(session.id, session);
+        await saveSession(session);
 
         const reply = `Age recorded: **${age}**. Now provide gender for passenger #${idx + 1} (Male / Female / Other).`;
         session.history.push({ role: 'assistant', content: reply });
@@ -758,7 +758,7 @@ const chatWithAssistant = async (req, res) => {
         draft.currentIndex = idx + 1;
 
         session.bookingDraft = draft;
-        sessions.set(session.id, session);
+        await saveSession(session);
 
         if (draft.currentIndex < expected) {
           draft.stage = 'collect_name';
@@ -772,7 +772,7 @@ const chatWithAssistant = async (req, res) => {
         draft.currentIndex = 0;
 
         session.bookingDraft = draft;
-        sessions.set(session.id, session);
+        await saveSession(session);
 
         const summary = draft.passengerData
           .map((p, i) => `${i + 1}. **${p.fullName}** — Age: ${p.age}, Gender: ${p.gender}, Type: ${p.type || 'adult'}`)
@@ -793,7 +793,7 @@ const chatWithAssistant = async (req, res) => {
         
         draft.currentIndex = idx + 1;
         session.bookingDraft = draft;
-        sessions.set(session.id, session);
+        await saveSession(session);
 
         if (draft.currentIndex < expected) {
           const nextPassenger = draft.passengerData[draft.currentIndex];
@@ -805,7 +805,7 @@ const chatWithAssistant = async (req, res) => {
         // All preferences collected - ask about auto vs manual
         draft.stage = 'collect_seat_flow';
         session.bookingDraft = draft;
-        sessions.set(session.id, session);
+        await saveSession(session);
 
         const reply = `Perfect! I have seat preferences for all passengers.\n\nWould you like me to:\n1. **Auto-assign seats** based on preferences\n2. **Let you choose seats manually**\n\nReply \`auto\` or \`manual\`.`;
         session.history.push({ role: 'assistant', content: reply });
@@ -971,7 +971,7 @@ const chatWithAssistant = async (req, res) => {
         draft.readyForPayment = true;
 
         session.bookingDraft = draft;
-        sessions.set(session.id, session);
+        await saveSession(session);
 
         const navData = { path: '/payment', state: { booking: draft } };
         const reply = `Booking created! Total: ₹${totalAmount}\nRedirecting to payment...`;
@@ -984,7 +984,7 @@ const chatWithAssistant = async (req, res) => {
         draft.readyForPayment = true;
         draft.bookingId = null;
         session.bookingDraft = draft;
-        sessions.set(session.id, session);
+        await saveSession(session);
 
         const navData = { path: '/payment', state: { booking: draft } };
         const reply = `You're almost done — please log in to complete payment. Redirecting to payment...`;
