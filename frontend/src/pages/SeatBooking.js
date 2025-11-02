@@ -31,6 +31,7 @@ const SeatBooking = () => {
 
   const seatCountNeeded = passengerData.length || 1;
 
+  // All state hooks at the top
   const [selectedSeats, setSelectedSeats] = useState(preAssignedSeats || []);
   const [bookedSeats, setBookedSeats] = useState([]);
   const [loadingBooked, setLoadingBooked] = useState(false);
@@ -39,6 +40,7 @@ const SeatBooking = () => {
   const [animatingSeats, setAnimatingSeats] = useState(new Set());
   const [confirming, setConfirming] = useState(false);
 
+  // All effect hooks at the top
   useEffect(() => {
     const token = localStorage.getItem('authToken') || localStorage.getItem('token');
     if (token) setAuthToken(token);
@@ -78,23 +80,7 @@ const SeatBooking = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flight?._id, travelClass, departureDate]);
 
-  if (!flight) return <div className="seat-error">No flight data provided.</div>;
-
-  const model = `${flight?.aircraft?.make} ${flight?.aircraft?.model}`;
-  const layoutForModel = aircraftLayouts?.[model];
-  const selectedClassKey = travelClass.toLowerCase();
-  const selectedLayout = layoutForModel?.[selectedClassKey];
-
-  if (!layoutForModel) return <div className="seat-error">Seat layout not available for: {model}</div>;
-  if (!selectedLayout) return <div className="seat-error">{travelClass} class not available for this aircraft.</div>;
-
-  // compute rows
-  const cols = selectedLayout.layout;
-  const seatsPerRow = selectedLayout.seatsPerRow || cols.length;
-  const totalSeats = (flight.seats && flight.seats[selectedClassKey]) || (seatsPerRow * 30);
-  const rowCount = Math.ceil(totalSeats / seatsPerRow);
-
-  // helper to determine if this seat is pre-assigned (locked)
+  // Memoized and callback hooks
   const preAssignedSet = useMemo(() => new Set(preAssignedSeats || []), [preAssignedSeats]);
 
   // Enhanced seat information
