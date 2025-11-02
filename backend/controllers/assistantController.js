@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const Flight = require('../models/Flight');
 const Booking = require('../models/Booking');
+const Hotel = require('../models/Hotel');
 const Session = require('../models/Session');
 const UserProfile = require('../models/UserProfile');
 
