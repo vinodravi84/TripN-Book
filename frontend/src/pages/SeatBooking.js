@@ -83,6 +83,16 @@ const SeatBooking = () => {
   // Memoized and callback hooks
   const preAssignedSet = useMemo(() => new Set(preAssignedSeats || []), [preAssignedSeats]);
 
+  // Compute derived values for use in hooks (before any conditional returns)
+  const model = flight ? `${flight?.aircraft?.make} ${flight?.aircraft?.model}` : '';
+  const layoutForModel = aircraftLayouts?.[model];
+  const selectedClassKey = travelClass.toLowerCase();
+  const selectedLayout = layoutForModel?.[selectedClassKey];
+  const cols = selectedLayout?.layout || [];
+  const seatsPerRow = selectedLayout?.seatsPerRow || cols.length;
+  const totalSeats = (flight?.seats && flight.seats[selectedClassKey]) || (seatsPerRow * 30);
+  const rowCount = Math.ceil(totalSeats / seatsPerRow);
+
   // Enhanced seat information
   const getSeatInfo = useCallback((seatId) => {
     const isSelected = selectedSeats.includes(seatId) || preAssignedSet.has(seatId);
