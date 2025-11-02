@@ -214,83 +214,210 @@ const SeatBooking = () => {
   }, [selectedSeats, seatCountNeeded, bookedSeats, flight, passengerData, travelClass, departureDate, booking, navigate]);
 
   return (
-    <div className="seat-booking-container">
-      <h2>Select Your Seats ({travelClass}) — {model}</h2>
+    <SeatBookingErrorBoundary>
+      <div className="seat-booking-container">
+        <div className="seat-booking-header">
+          <h2>Select Your Seats ({travelClass}) — {model}</h2>
+          <div className="seat-booking-subtitle">
+            <span className="seat-info">
+              <span className="seat-info-item">
+                Seats to select: <strong>{seatCountNeeded}</strong>
+              </span>
+              <span className="seat-info-separator">•</span>
+              <span className="seat-info-item">
+                Selected: <strong className={selectedSeats.length === seatCountNeeded ? 'complete' : 'incomplete'}>
+                  {selectedSeats.length}/{seatCountNeeded}
+                </strong>
+              </span>
+            </span>
+            {departureDate && (
+              <div className="travel-date-info">
+                Travel Date: <strong>{new Date(departureDate).toLocaleDateString()}</strong>
+              </div>
+            )}
+          </div>
+        </div>
 
-      <div style={{ marginBottom: 8 }}>
-        <small>
-          Seats to select: <strong>{seatCountNeeded}</strong> &nbsp;|&nbsp;
-          Selected: <strong>{selectedSeats.length}</strong>
-        </small>
-      </div>
+        <div className="seat-legend">
+          <div className="legend-item">
+            <span className="legend-box available"></span>
+            <span className="legend-text">Available</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-box selected"></span>
+            <span className="legend-text">Selected</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-box booked"></span>
+            <span className="legend-text">Booked</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-box locked"></span>
+            <span className="legend-text">Assigned</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-box window"></span>
+            <span className="legend-text">Window</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-box aisle"></span>
+            <span className="legend-text">Aisle</span>
+          </div>
+        </div>
 
-      <div className="seat-legend" style={{ marginBottom: 12 }}>
-        <span className="legend-item"><span className="legend-box available" /> Available</span>
-        <span className="legend-item"><span className="legend-box selected" /> Selected</span>
-        <span className="legend-item"><span className="legend-box booked" /> Booked</span>
-        <span className="legend-item"><span className="legend-box locked" /> Assigned</span>
-        <span className="legend-item"><span className="legend-box disabled" /> Other Class</span>
-      </div>
+        <div className="aircraft-image-container">
+          <img src={aircraftImage} alt="Aircraft Top View" className="aircraft-image" />
+          <div className="seat-grid-absolute">
+            {loadingBooked ? (
+              <SeatMapLoader message="Loading seat availability..." />
+            ) : bookedError ? (
+              <div className="seat-error-message">
+                <div className="error-icon">⚠️</div>
+                <div className="error-text">{bookedError}</div>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="retry-btn"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="seat-info-tooltip" style={{
+                  display: hoveredSeat ? 'block' : 'none',
+                  position: 'absolute',
+                  top: '10px',
+                  right: '10px',
+                  background: 'white',
+                  padding: '12px',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  zIndex: 1000,
+                  maxWidth: '200px'
+                }}>
+                  {hoveredSeat && (() => {
+                    const info = getSeatInfo(hoveredSeat);
+                    return (
+                      <div>
+                        <strong>Seat {hoveredSeat}</strong>
+                        <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                          Type: {info.seatType}
+                          {info.passengerName && (
+                            <div>Assigned to: {info.passengerName}</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
 
-      <div className="aircraft-image-container">
-        <img src={aircraftImage} alt="Aircraft Top View" className="aircraft-image" />
-        <div className="seat-grid-absolute">
-          {loadingBooked && <div className="booked-loading">Loading booked seats...</div>}
-          {bookedError && <div style={{ color: 'orangered' }}>{bookedError}</div>}
+                {[...Array(rowCount)].map((_, rowIdx) => (
+                  <div key={`row-${rowIdx}`} className="seat-row">
+                    <div className="row-number">{rowIdx + 1}</div>
+                    {cols.map((col, colIdx) => {
+                      const seatId = `${selectedClassKey[0].toUpperCase()}${rowIdx + 1}${col}`;
+                      const info = getSeatInfo(seatId);
 
-          {[...Array(rowCount)].map((_, rowIdx) => (
-            <div key={`row-${rowIdx}`} className="seat-row">
-              {cols.map((col, colIdx) => {
-                const seatId = `${selectedClassKey[0].toUpperCase()}${rowIdx + 1}${col}`;
-                const isSelected = selectedSeats.includes(seatId) || preAssignedSet.has(seatId);
-                const isBooked = bookedSeats.includes(seatId);
-                const isLocked = preAssignedSet.has(seatId);
-                const isDisabled = false;
+                      const classNames = [
+                        'seat',
+                        info.isSelected ? 'selected' : '',
+                        info.isLocked ? 'locked' : '',
+                        info.isBooked ? 'booked' : '',
+                        info.isHovered ? 'hovered' : '',
+                        info.isAnimating ? 'animating' : '',
+                        info.seatType === 'window' ? 'window-seat' : '',
+                        info.seatType === 'aisle' ? 'aisle-seat' : '',
+                        info.seatType === 'middle' ? 'middle-seat' : '',
+                      ].filter(Boolean).join(' ');
 
-                const classNames = [
-                  'seat',
-                  isSelected ? 'selected' : '',
-                  isLocked ? 'locked' : '',
-                  isBooked ? 'booked' : '',
-                ].join(' ').trim();
+                      const title = info.isBooked ? 'Already booked' :
+                                   info.isLocked ? `Assigned to ${info.passengerName || 'passenger'}` :
+                                   `Seat ${seatId} (${info.seatType})`;
 
-                const title = isBooked ? 'Already booked' : isLocked ? `Assigned seat ${seatId}` : `Seat ${seatId}`;
+                      return (
+                        <div
+                          key={colIdx}
+                          role="button"
+                          tabIndex={info.canSelect ? 0 : -1}
+                          aria-disabled={!info.canSelect}
+                          aria-label={`${title}. ${info.canSelect ? 'Click to select' : 'Not available'}`}
+                          title={title}
+                          className={classNames}
+                          data-seat-id={seatId}
+                          onClick={() => {
+                            if (info.canSelect) toggleSeat(seatId, selectedClassKey);
+                          }}
+                          onMouseEnter={() => setHoveredSeat(seatId)}
+                          onMouseLeave={() => setHoveredSeat(null)}
+                          onKeyDown={(e) => {
+                            if ((e.key === 'Enter' || e.key === ' ') && info.canSelect) {
+                              e.preventDefault();
+                              toggleSeat(seatId, selectedClassKey);
+                            }
+                          }}
+                        >
+                          <span className="seat-number">{seatId.slice(-1)}</span>
+                          {info.isLocked && (
+                            <span className="seat-lock-icon">🔒</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </div>
 
+        <div className="seat-booking-actions">
+          <button
+            onClick={handleConfirm}
+            disabled={selectedSeats.length !== seatCountNeeded || confirming}
+            className={`confirm-btn ${selectedSeats.length === seatCountNeeded ? 'ready' : 'disabled'} ${confirming ? 'loading' : ''}`}
+          >
+            {confirming ? (
+              <>
+                <span className="loading-spinner"></span>
+                Confirming...
+              </>
+            ) : (
+              <>
+                Confirm Seats ({selectedSeats.length}/{seatCountNeeded})
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => navigate(-1)}
+            className="back-btn"
+            disabled={confirming}
+          >
+            Back
+          </button>
+        </div>
+
+        {selectedSeats.length > 0 && (
+          <div className="selected-seats-summary">
+            <h4>Selected Seats:</h4>
+            <div className="selected-seats-list">
+              {selectedSeats.map((seatId, index) => {
+                const info = getSeatInfo(seatId);
                 return (
-                  <div
-                    key={colIdx}
-                    role="button"
-                    tabIndex={0}
-                    aria-disabled={isBooked || isLocked}
-                    title={title}
-                    className={classNames}
-                    onClick={() => {
-                      if (!isBooked && !isLocked) toggleSeat(seatId, selectedClassKey);
-                    }}
-                    onKeyDown={(e) => {
-                      if ((e.key === 'Enter' || e.key === ' ') && !isBooked && !isLocked) {
-                        e.preventDefault();
-                        toggleSeat(seatId, selectedClassKey);
-                      }
-                    }}
-                  >
-                    {seatId}
+                  <div key={seatId} className="selected-seat-item">
+                    <span className="seat-id">{seatId}</span>
+                    <span className="seat-type-badge">{info.seatType}</span>
+                    {passengerData[index] && (
+                      <span className="passenger-name">{passengerData[index].fullName}</span>
+                    )}
                   </div>
                 );
               })}
             </div>
-          ))}
-        </div>
+          </div>
+        )}
       </div>
-
-      <div style={{ marginTop: 12 }}>
-        <button onClick={handleConfirm} className="confirm-btn">Confirm Seats</button>
-        <button onClick={() => {
-          // go back to passenger form to change preferences
-          navigate(-1);
-        }} style={{ marginLeft: 12 }}>Back</button>
-      </div>
-    </div>
+    </SeatBookingErrorBoundary>
   );
 };
 
