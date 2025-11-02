@@ -35,6 +35,9 @@ const SeatBooking = () => {
   const [bookedSeats, setBookedSeats] = useState([]);
   const [loadingBooked, setLoadingBooked] = useState(false);
   const [bookedError, setBookedError] = useState('');
+  const [hoveredSeat, setHoveredSeat] = useState(null);
+  const [animatingSeats, setAnimatingSeats] = useState(new Set());
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('authToken') || localStorage.getItem('token');
