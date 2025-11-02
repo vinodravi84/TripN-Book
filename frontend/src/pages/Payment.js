@@ -1,4 +1,6 @@
-// src/pages/Payment.js
+// ---------- src/pages/Payment.js (UPDATED small fixes) ----------
+// Frontend: ensure we forward travelDate properly and include it in payload when calling assistant confirm endpoint.
+
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../services/api';
@@ -9,12 +11,10 @@ import '../styles/Payment.css';
 const formatDate = (d) => {
   try {
     if (!d) return 'N/A';
-    // accept date string like "2025-11-01" or full ISO
     const dt = (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))
       ? new Date(d + 'T00:00:00')
       : (typeof d === 'string' || typeof d === 'number') ? new Date(d) : d;
     if (!dt || Number.isNaN(dt.getTime())) return 'N/A';
-    // show date + time; change to toLocaleDateString() if you want date-only
     return dt.toLocaleString();
   } catch (e) {
     return 'N/A';
@@ -80,11 +80,10 @@ const Payment = () => {
 
     setProcessing(true);
     try {
-      // existing assistant confirmation flow (keeps previous behavior)
       // simulate payment result or call payment provider...
       const paymentResult = { success: true, id: 'local-simulated' };
 
-      // Try assistant confirm endpoint first (existing behavior)
+      // Try assistant confirm endpoint first (keeps previous behavior)
       try {
         const payload = {
           sessionId: localStorage.getItem('aiSessionId'),

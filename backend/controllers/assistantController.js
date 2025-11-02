@@ -1,5 +1,7 @@
-// backend/controllers/assistantController.js
-// TripNBook AI Assistant — conversational booking agent (ENHANCED: fuzzy city matching, richer filtering, friendly tone & suggestions)
+// ---------- backend/controllers/assistantController.js (UPDATED FULL) ----------
+// TripNBook AI Assistant — improvements: ask & persist travel date, better filtering (stops/duration/refundable),
+// small-talk handling during booking, save travelDate into bookingDraft & DB, forward travelDate to seat/payment UIs,
+// mark session completed when navigating to payment, general chit-chat handler.
 
 const axios = require('axios');
 const chrono = require('chrono-node');
@@ -9,7 +11,7 @@ const fs = require('fs');
 const Flight = require('../models/Flight');
 const Booking = require('../models/Booking');
 
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '';
+const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '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';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL_NAME = process.env.OPENROUTER_MODEL || 'gpt-4o-mini';
 
@@ -33,6 +35,10 @@ const fuse = new Fuse(cityList, { keys: ['city', 'iata'], threshold: 0.35, ignor
 
 // in-memory sessions
 const sessions = new Map();
+
+// general (non-booking) chit-chat / travel suggestion trigger
+const generalSmallTalkRegex = /\b(places to visit|recommend|travel tips|where to go|good places|things to do|suggest (?:a )?place|what to do in|travel ideas|top destinations|holiday ideas|best places to visit)\b/i;
+const paymentRelatedRegex = /\b(payment|paid|checkout|confirm payment|payment successful|txn|transaction|transaction id|payment id)\b/i;
 
 // ----------------- Helpers -----------------
 function parseDateFromText(text) {
@@ -103,7 +109,8 @@ function ensureSession(sessionId) {
       context: {},
       lastSearchResults: [],
       selectedFlight: null,
-      bookingDraft: null
+      bookingDraft: null,
+      completed: false
     });
   }
   return sessions.get(sid);
@@ -144,6 +151,7 @@ function flightDepartureHour(flight) {
   return null;
 }
 
+// Enhanced applyFilters (adds stops, duration, refundable, sorting by duration)
 function applyFilters(results, text) {
   if (!Array.isArray(results)) return [];
   let filtered = [...results];
@@ -164,6 +172,31 @@ function applyFilters(results, text) {
     filtered = filtered.filter(f => (f.price || Infinity) >= low && (f.price || 0) <= high);
   }
 
+  // Stops parsing: "nonstop" / "direct" / "1 stop" etc.
+  if (/\b(non-?stop|direct)\b/.test(lower)) {
+    filtered = filtered.filter(f => (f.stops === 0 || f.stops === 'nonstop' || f.stops === 'direct'));
+  }
+  const stopsMatch = lower.match(/\b(\d+)\s*[- ]?stop(s)?\b/);
+  if (stopsMatch) {
+    const stopsNum = Number(stopsMatch[1]);
+    filtered = filtered.filter(f => Number(f.stops) === stopsNum);
+  }
+
+  // Duration parsing: "under 5h", "less than 3 hours"
+  const durMatch = lower.match(/(?:under|less than|<)\s*(\d+(?:\.\d+)?)\s*h(ours?)?/);
+  if (durMatch) {
+    const hours = parseFloat(durMatch[1]);
+    filtered = filtered.filter(f => (f.durationMinutes ? (f.durationMinutes / 60) <= hours : true));
+  }
+
+  // refundable
+  if (/\b(refund|refundable)\b/.test(lower)) {
+    filtered = filtered.filter(f => Boolean(f.refundable));
+  }
+  if (/\b(non[- ]?refundable|no refund)\b/.test(lower)) {
+    filtered = filtered.filter(f => !f.refundable);
+  }
+
   // earliest/immediate/soon -> sort by departure time ascending
   if (/\b(earliest|immediate|asap|soon|now|today|tonight)\b/.test(lower)) {
     filtered.sort((a, b) => {
@@ -173,6 +206,11 @@ function applyFilters(results, text) {
       if (bh === null) return -1;
       return ah - bh;
     });
+  }
+
+  // "duration" sort
+  if (/\b(sort by duration|shortest|quickest)\b/.test(lower)) {
+    filtered.sort((a, b) => (a.durationMinutes || Infinity) - (b.durationMinutes || Infinity));
   }
 
   // "cheapest" or explicit price-sort
@@ -438,7 +476,33 @@ const chatWithAssistant = async (req, res) => {
     const lower = msg.toLowerCase();
     session.history.push({ role: 'user', content: msg });
 
-    // friendly greetings
+    // small-talk detection (allow chit-chat while in booking)
+    const smallTalkRegex = /\b(how are you|how's it going|tell me a joke|joke|thanks|thank you|what's up|whats up|hi|hello|hey|good morning|good evening|recommend|suggest)\b/i;
+    const inBookingFlow = Boolean(session.bookingDraft?.stage);
+
+    // If session was already moved to payment/marked completed, don't try to resume booking automatically.
+    // Allow only payment-confirmation messages to proceed as booking flow; otherwise treat as chat/new search.
+    if (session.completed) {
+      // Allow payment confirmation words to continue; otherwise give a short reply and let user start a new search.
+      if (!paymentRelatedRegex.test(lower)) {
+        // Prefer LLM reply for chit-chat or fallback friendly message
+        const small = await callLLMForHelp(SYSTEM_PROMPT, msg, session.context)
+          || `Your booking has been moved to the Payment screen. If you'd like to chat or start another search, say "new search" or ask me anything (e.g. "places to visit in Goa").`;
+        session.history.push({ role: 'assistant', content: small });
+        return res.json({ reply: small, sessionId: session.id });
+      }
+      // else: let the message continue so payment confirmation path can run
+    }
+
+    // small chit-chat while in booking flow
+    if (inBookingFlow && smallTalkRegex.test(lower)) {
+      // answer small talk via LLM if available (keeps booking state intact)
+      const small = await callLLMForHelp(SYSTEM_PROMPT, msg, session.context) || "I'm good — ready when you are! Tell me the next passenger detail or say 'confirm' when you're ready.";
+      session.history.push({ role: 'assistant', content: small });
+      return res.json({ reply: small, sessionId: session.id, bookingDraft: session.bookingDraft });
+    }
+
+    // small friendly greetings
     if (/^(hi|hello|hey)\b/i.test(lower)) {
       const reply = "Hey! I'm TripNBook — your travel buddy. Tell me where you'd like to go (e.g. 'Flights from Chennai to Delhi this Sunday').";
       session.history.push({ role: 'assistant', content: reply });
@@ -460,9 +524,18 @@ const chatWithAssistant = async (req, res) => {
       session.selectedFlight = null;
       session.bookingDraft = null;
       session.lastSearchResults = session.lastSearchResults || [];
+      session.completed = false;
       const reply = 'Alright — booking cancelled. Want me to search again or suggest something else?';
       session.history.push({ role: 'assistant', content: reply });
       return res.json({ reply, sessionId: session.id });
+    }
+
+    // Handle general chit-chat / travel suggestions BEFORE flight parsing so it doesn't fall into "can't detect origin/destination"
+    if (generalSmallTalkRegex.test(lower) && !searchTriggers.test(lower)) {
+      const suggestions = await callLLMForHelp(SYSTEM_PROMPT, msg, session.context)
+         || `Here are some travel ideas:\n- Goa: beaches & nightlife\n- Jaipur: palaces & culture\n- Kerala (Munnar/Alleppey): backwaters & hill stations\n- Leh-Ladakh: high-altitude adventure\nIf you want recommendations for a specific month or budget, tell me when and how much you'd like to spend.`;
+      session.history.push({ role: 'assistant', content: suggestions });
+      return res.json({ reply: suggestions, sessionId: session.id });
     }
 
     // detect conversational suggestion requests
@@ -489,7 +562,6 @@ const chatWithAssistant = async (req, res) => {
     }
 
     // CRITICAL Fix: Check if we're in booking flow stages
-    const inBookingFlow = Boolean(session.bookingDraft?.stage);
     const hasSelectedFlightAwaitingCount = Boolean(session.selectedFlight && !session.bookingDraft);
 
     // quick finalise/book paths (code/number) - ONLY if NOT in booking flow
@@ -497,7 +569,13 @@ const chatWithAssistant = async (req, res) => {
     const explicitBookCode = msg.match(/\b(?:book|finali(?:s|z)e|finalize|select)\b[\s:,-]*([A-Za-z0-9-]{2,8})\b/i);
     const numericOnly = msg.match(/^\s*(?:book|finali(?:s|z)e)?\s*#?\s*(\d{1,2})\s*$/i);
 
+    // If user tries to finalize but we don't have a travel date, ask for it first
     if (finaliseRegex.test(lower) && !explicitBookCode && !numericOnly && session.selectedFlight && !inBookingFlow) {
+      if (!session.context?.date) {
+        const reply = `Before we finalize, when would you like to travel? Please provide a date (e.g., '2025-11-10' or 'next Friday').`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
+      }
       const chosen = session.selectedFlight;
       const reply = `Nice choice — ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers are traveling? Reply with a number and I'll collect details.`;
       session.history.push({ role: 'assistant', content: reply });
@@ -510,6 +588,15 @@ const chatWithAssistant = async (req, res) => {
         const chosen = session.lastSearchResults.find(f => (f.flightNumber || '').toLowerCase() === code.toLowerCase());
         if (chosen) {
           session.selectedFlight = chosen;
+          // if we don't have a set date in context, ask for it now
+          if (!session.context?.date) {
+            session.context = session.context || {};
+            session.context.fromCity = session.context.fromCity || { city: chosen.departureCity, iata: chosen.departureCityCode };
+            session.context.toCity = session.context.toCity || { city: chosen.arrivalCity, iata: chosen.arrivalCityCode };
+            const reply = `You picked ✈️ ${chosen.airline} ${chosen.flightNumber}. When is your travel date?`;
+            session.history.push({ role: 'assistant', content: reply });
+            return res.json({ reply, sessionId: session.id });
+          }
           const reply = `You picked ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers?`;
           session.history.push({ role: 'assistant', content: reply });
           return res.json({ reply, sessionId: session.id });
@@ -521,6 +608,12 @@ const chatWithAssistant = async (req, res) => {
         session.context.fromCity = session.context.fromCity || { city: flightFromDb.departureCity, iata: flightFromDb.departureCityCode };
         session.context.toCity = session.context.toCity || { city: flightFromDb.arrivalCity, iata: flightFromDb.arrivalCityCode };
         session.lastSearchResults = session.lastSearchResults && session.lastSearchResults.length ? session.lastSearchResults : [flightFromDb];
+        // ask for date before passenger count if missing
+        if (!session.context?.date) {
+          const reply = `You selected ✈️ ${flightFromDb.airline} ${flightFromDb.flightNumber}. When are you travelling?`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id, bookingDraft: session.bookingDraft });
+        }
         const reply = `You selected ✈️ ${flightFromDb.airline} ${flightFromDb.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
         session.history.push({ role: 'assistant', content: reply });
         return res.json({ reply, sessionId: session.id });
@@ -539,6 +632,12 @@ const chatWithAssistant = async (req, res) => {
       const chosen = session.lastSearchResults[idx];
       if (chosen) {
         session.selectedFlight = chosen;
+        // ask for date if not present
+        if (!session.context?.date) {
+          const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. When would you like to travel?`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id });
+        }
         const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
         session.history.push({ role: 'assistant', content: reply });
         return res.json({ reply, sessionId: session.id });
@@ -559,7 +658,7 @@ const chatWithAssistant = async (req, res) => {
         session.history.push({ role: 'assistant', content: reply });
         return res.json({ reply, sessionId: session.id });
       }
-      if (/\b(evening|morning|after|before|am|pm|earliest|immediate|soon|today|tonight)\b/.test(lower)) {
+      if (/\b(evening|morning|after|before|am|pm|earliest|immediate|soon|today|tonight|nonstop|direct|stop|hours|duration|refundable|refundable)\b/.test(lower)) {
         session.lastSearchResults = filtered;
         const reply = filtered.length ? `Here are filtered flights:\n\n${formatFlightsShort(filtered)}` : "No flights found matching that filter.";
         session.history.push({ role: 'assistant', content: reply });
@@ -571,6 +670,12 @@ const chatWithAssistant = async (req, res) => {
         const chosen = session.lastSearchResults.find(f => (f.flightNumber || '').toLowerCase() === code);
         if (chosen) {
           session.selectedFlight = chosen;
+          // ask for date if not known
+          if (!session.context?.date) {
+            const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. When is your travel date?`;
+            session.history.push({ role: 'assistant', content: reply });
+            return res.json({ reply, sessionId: session.id });
+          }
           const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
           session.history.push({ role: 'assistant', content: reply });
           return res.json({ reply, sessionId: session.id });
@@ -580,6 +685,11 @@ const chatWithAssistant = async (req, res) => {
       if (!isNaN(asNum) && session.lastSearchResults[asNum - 1]) {
         const chosen = session.lastSearchResults[asNum - 1];
         session.selectedFlight = chosen;
+        if (!session.context?.date) {
+          const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. When would you like to travel?`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id });
+        }
         const reply = `You selected ✈️ ${chosen.airline} ${chosen.flightNumber}. How many passengers? Reply with a number, and I'll collect details one-by-one.`;
         session.history.push({ role: 'assistant', content: reply });
         return res.json({ reply, sessionId: session.id });
@@ -589,7 +699,22 @@ const chatWithAssistant = async (req, res) => {
     // ---------- Stepwise booking flow ----------
     // STEP 1: Awaiting passenger count
     if (session.selectedFlight && !session.bookingDraft) {
+      // if we just received a date string, store it
+      const maybeDate = parseDateFromText(msg);
+      if (!session.context?.date && maybeDate) {
+        session.context = session.context || {};
+        session.context.date = maybeDate;
+        sessions.set(session.id, session);
+      }
+
       const maybeCount = extractPassengerCount(msg);
+      // require date first
+      if (!session.context?.date) {
+        const reply = `Could you tell me the travel date for this flight? (e.g., '2025-11-10' or 'next Monday')`;
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
+      }
+
       if (maybeCount && maybeCount > 0 && maybeCount <= 20) {
         const count = maybeCount;
         // DEFAULT passenger objects include a `type` property to match Booking schema.
@@ -599,7 +724,8 @@ const chatWithAssistant = async (req, res) => {
           expectedPassengers: count, 
           currentIndex: 0, 
           stage: 'collect_name',
-          travelClass: 'Economy'
+          travelClass: 'Economy',
+          departureDate: session.context.date || null // persist selected date
         };
 
         // PERSIST SESSION
@@ -806,7 +932,8 @@ const chatWithAssistant = async (req, res) => {
               passengerData: draft.passengerData,
               selectedSeats: draft.selectedSeats || [],
               allowManualSelect: true,
-              booking: draft
+              booking: draft,
+              departureDate: draft.departureDate || null
             }
           };
           const reply = `Opening seat selection UI. Please choose ${draft.passengerData.length} seat(s).`;
@@ -827,17 +954,21 @@ const chatWithAssistant = async (req, res) => {
               selectedSeats: draft.selectedSeats || [],
               totalAmount,
               travelClass: draft.travelClass || 'Economy',
-              paymentStatus: 'Pending'
+              paymentStatus: 'Pending',
+              travelDate: draft.departureDate || draft.travelDate || null
             };
             const booking = new Booking(bookingPayload);
             const saved = await booking.save();
             draft.bookingId = saved._id;
             draft.totalAmount = totalAmount;
             draft.readyForPayment = true;
+            // mark completed and keep session so payment confirmation can use it
+            draft.completedAt = new Date().toISOString();
             session.bookingDraft = draft;
+            session.completed = true;
             sessions.set(session.id, session);
 
-            const navData = { path: '/payment', state: { booking: draft } };
+            const navData = { path: '/payment', state: { booking: draft, departureDate: draft.departureDate || null } };
             const reply = `Booking created! Total: ₹${totalAmount}\nRedirecting to payment...`;
             session.history.push({ role: 'assistant', content: reply });
             return res.json({ reply, navigateTo: navData, sessionId: session.id, bookingDraft: draft });
@@ -846,10 +977,12 @@ const chatWithAssistant = async (req, res) => {
             draft.totalAmount = totalAmount;
             draft.readyForPayment = true;
             draft.bookingId = null;
+            draft.completedAt = new Date().toISOString();
             session.bookingDraft = draft;
+            session.completed = true;
             sessions.set(session.id, session);
 
-            const navData = { path: '/payment', state: { booking: draft } };
+            const navData = { path: '/payment', state: { booking: draft, departureDate: draft.departureDate || null } };
             const reply = `You're almost done — please log in to complete payment. Redirecting to payment...`;
             session.history.push({ role: 'assistant', content: reply });
             return res.json({ reply, navigateTo: navData, sessionId: session.id, bookingDraft: draft });
@@ -887,7 +1020,8 @@ const chatWithAssistant = async (req, res) => {
           selectedSeats: draft.selectedSeats || [],
           totalAmount,
           travelClass: draft.travelClass || 'Economy',
-          paymentStatus: 'Pending'
+          paymentStatus: 'Pending',
+          travelDate: draft.departureDate || draft.travelDate || null
         };
         const booking = new Booking(bookingPayload);
         const saved = await booking.save();
@@ -895,10 +1029,13 @@ const chatWithAssistant = async (req, res) => {
         draft.totalAmount = totalAmount;
         draft.readyForPayment = true;
 
+        // mark completed and keep session for payment callback
+        draft.completedAt = new Date().toISOString();
         session.bookingDraft = draft;
+        session.completed = true;
         sessions.set(session.id, session);
 
-        const navData = { path: '/payment', state: { booking: draft } };
+        const navData = { path: '/payment', state: { booking: draft, departureDate: draft.departureDate || null } };
         const reply = `Booking created! Total: ₹${totalAmount}\nRedirecting to payment...`;
         session.history.push({ role: 'assistant', content: reply });
 
@@ -908,15 +1045,56 @@ const chatWithAssistant = async (req, res) => {
         draft.totalAmount = totalAmount;
         draft.readyForPayment = true;
         draft.bookingId = null;
+        draft.completedAt = new Date().toISOString();
         session.bookingDraft = draft;
+        session.completed = true;
         sessions.set(session.id, session);
 
-        const navData = { path: '/payment', state: { booking: draft } };
+        const navData = { path: '/payment', state: { booking: draft, departureDate: draft.departureDate || null } };
         const reply = `You're almost done — please log in to complete payment. Redirecting to payment...`;
         session.history.push({ role: 'assistant', content: reply });
         return res.json({ reply, navigateTo: navData, sessionId: session.id, bookingDraft: draft });
       }
     }
+    // --- Handle airport / location queries (LLM first, local fallback) ---
+const airportQuery = msg.match(/\b(nearest|closest)\s+(airport|airfield)\s+(to|near)\s+(.+)/i)
+                  || msg.match(/\b(airport|airfield)\s+(near|close to)\s+(.+)/i)
+                  || msg.match(/\b(how to reach|how do i get to|how can i reach)\s+(.+)/i);
+
+if (airportQuery) {
+  const place = (airportQuery[4] || airportQuery[3] || airportQuery[2] || airportQuery[1] || '').trim();
+
+  // 1) Ask the LLM first — short, constrained prompt to encourage concise factual reply
+  let llmReply = null;
+  try {
+    llmReply = await callLLMForHelp(
+      SYSTEM_PROMPT + `\nUser asked: "Nearest airport to ${place}". Reply concisely with the airport name and IATA code (example: "Agra Airport (AGR) — ~12 km from the Taj Mahal"). If unknown, reply exactly "UNKNOWN".`,
+      msg,
+      session.context
+    );
+  } catch (e) {
+    llmReply = null;
+  }
+
+  // 2) If LLM gave a usable answer other than "UNKNOWN", return it
+  if (llmReply && !/^\s*unknown\s*$/i.test(llmReply.trim())) {
+    session.history.push({ role: 'assistant', content: llmReply });
+    return res.json({ reply: llmReply, sessionId: session.id });
+  }
+
+  // 3) Fallback to local lookup using resolveCity()
+  const cityMatch = resolveCity(place);
+  let reply;
+  if (cityMatch) {
+    reply = `The nearest major airport to ${titleCase(place)} is ${cityMatch.city} Airport (${cityMatch.iata}).`;
+  } else {
+    reply = `I couldn't find a precise local match for "${titleCase(place)}". A commonly referenced airport for the Taj Mahal is Agra Airport (AGR) — about 12 km from the Taj Mahal.`;
+  }
+
+  session.history.push({ role: 'assistant', content: reply });
+  return res.json({ reply, sessionId: session.id });
+}
+// --- end airport/location handler ---
 
     // parse flight search
     const date = parseDateFromText(msg);
@@ -945,11 +1123,18 @@ const chatWithAssistant = async (req, res) => {
 
     if (!from || !to) {
       // ask LLM as fallback but with friendlier prompt and hint about typos
-      const llmHelp = await callLLMForHelp(SYSTEM_PROMPT, msg, session.context);
+      const llmHelp = await callLLMForHelp(
+        SYSTEM_PROMPT + "\nIf user message isn't a flight search, reply as a helpful travel assistant instead of asking for origin/destination.",
+        msg,
+        session.context
+      );
       const reply = llmHelp || "I couldn't detect both origin and destination — maybe a small typo? Try: 'Flights from Chennai to Kolkata on Sunday'. You can also type airport codes like BLR or DEL.";
       session.history.push({ role: 'assistant', content: reply });
       return res.json({ reply, sessionId: session.id });
     }
+
+    // attach date if we parsed one
+    if (date) session.context = { ...(session.context || {}), date };
 
     const flights = await Flight.find({ 
       departureCityCode: new RegExp(from.iata, 'i'), 
@@ -962,12 +1147,13 @@ const chatWithAssistant = async (req, res) => {
       return res.json({ reply, sessionId: session.id });
     }
 
-    session.context = { fromCity: from, toCity: to, date };
+    session.context = { fromCity: from, toCity: to, date: session.context?.date || date };
     session.lastSearchResults = flights;
     session.selectedFlight = null;
     session.bookingDraft = null;
+    session.completed = false;
 
-    const reply = `Found ${flights.length} flights from ${from.city} to ${to.city}${date ? ' on ' + date : ''}.\n\n${formatFlightsShort(flights)}\n\nReply with the number to select, or say 'sort by cheapest' or 'show evening flights after 7pm'.`;
+    const reply = `Found ${flights.length} flights from ${from.city} to ${to.city}${session.context.date ? ' on ' + session.context.date : ''}.\n\n${formatFlightsShort(flights)}\n\nReply with the number to select, or say 'sort by cheapest' or 'show evening flights after 7pm'.`;
     session.history.push({ role: 'assistant', content: reply });
     return res.json({ reply, sessionId: session.id, resultsCount: flights.length });
   } catch (err) {
@@ -997,7 +1183,7 @@ const confirmPaymentAndCreateBooking = async (req, res) => {
     }
 
     // If no booking exists yet, we must have an authenticated user to create it now.
-    if (!req.user || !req.user._1) {
+    if (!req.user || !req.user._id) {
       return res.status(401).json({ error: 'Authentication required to create booking' });
     }
 
@@ -1011,7 +1197,8 @@ const confirmPaymentAndCreateBooking = async (req, res) => {
       totalAmount: draft.totalAmount || ((draft.flight?.price || 0) * (draft.passengerData?.length || 1)),
       travelClass: draft.travelClass || 'Economy',
       paymentStatus: 'Paid',
-      payment: paymentResult
+      payment: paymentResult,
+      travelDate: draft.departureDate || draft.travelDate || null
     };
 
     const booking = new Booking(bookingPayload);
@@ -1031,7 +1218,7 @@ You help users find, compare, and book flights and hotels in a natural conversat
 
 Your tasks:
 - Understand user intent from natural messages (e.g., "I want evening flights", "book that cheap one", "finalize AI217").
-- Extract structured info: { from_city, to_city, date, filters (price/time/airline), passengers }.
+- Extract structured info: { from_city, to_city, date, filters (price/time/airline/stops/duration/refundable), passengers }.
 - Maintain context: remember last city pair, date, filters, selections, and booking draft.
 - Ask for passenger details when needed: name, age, gender, seat preference.
 - Support auto-assign seats or manual seat selection. Use backend auto-assign heuristics when requested.
