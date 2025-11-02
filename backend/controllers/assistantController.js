@@ -95,19 +95,92 @@ function titleCase(s) {
   return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' '); 
 }
 
-function ensureSession(sessionId) {
+async function ensureSession(sessionId, userId = null) {
   const sid = sessionId || `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  if (!sessions.has(sid)) {
-    sessions.set(sid, {
+
+  try {
+    // Try to find existing session
+    let session = await Session.findOne({ sessionId: sid });
+
+    if (!session) {
+      // Create new session
+      session = new Session({
+        sessionId: sid,
+        userId: userId,
+        history: [],
+        context: {
+          fromCity: null,
+          toCity: null,
+          date: null,
+          lastSearchResults: [],
+          selectedFlight: null
+        },
+        bookingDraft: null
+      });
+      await session.save();
+    } else {
+      // Check if session is expired and extend if needed
+      if (session.isExpired()) {
+        await session.extendSession(24); // Extend by 24 hours
+      }
+    }
+
+    // Return session in same format as before for compatibility
+    return {
+      id: session.sessionId,
+      userId: session.userId,
+      history: session.history,
+      context: session.context,
+      lastSearchResults: session.context.lastSearchResults || [],
+      selectedFlight: session.context.selectedFlight,
+      bookingDraft: session.bookingDraft,
+      _dbSession: session // Store reference for saving later
+    };
+  } catch (error) {
+    console.error('Session management error:', error);
+    // Fallback to in-memory session if database fails
+    return {
       id: sid,
+      userId: userId,
       history: [],
       context: {},
       lastSearchResults: [],
       selectedFlight: null,
-      bookingDraft: null
-    });
+      bookingDraft: null,
+      _fallback: true
+    };
   }
-  return sessions.get(sid);
+}
+
+async function saveSession(sessionData) {
+  if (sessionData._fallback || !sessionData._dbSession) {
+    return; // Skip saving for fallback sessions
+  }
+
+  try {
+    const dbSession = sessionData._dbSession;
+    dbSession.history = sessionData.history;
+    dbSession.context = {
+      fromCity: sessionData.context?.fromCity || null,
+      toCity: sessionData.context?.toCity || null,
+      date: sessionData.context?.date || null,
+      lastSearchResults: sessionData.lastSearchResults || [],
+      selectedFlight: sessionData.selectedFlight || null
+    };
+    dbSession.bookingDraft = sessionData.bookingDraft;
+
+    await dbSession.save();
+  } catch (error) {
+    console.error('Error saving session:', error);
+  }
+}
+
+async function deleteSession(sessionId) {
+  try {
+    await Session.deleteOne({ sessionId: sessionId });
+  } catch (error) {
+    console.error('Error deleting session:', error);
+  }
 }
 
 // ---------- Time / flight helpers ----------
