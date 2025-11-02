@@ -120,11 +120,13 @@ const SeatBooking = () => {
         passengerData,
         travelClass,
         selectedSeats,
-        departureDate
+        departureDate,
+        travelDate: departureDate // Ensure travelDate is included for backend validation
       };
     } else {
       draft.selectedSeats = selectedSeats;
       draft.passengerData = passengerData;
+      draft.travelDate = departureDate; // Ensure travelDate is included
     }
     localStorage.setItem('bookingDraft', JSON.stringify(draft));
     navigate('/payment', { state: { booking: draft } });
