@@ -1,0 +1,225 @@
+---
+- name: Deploy TripNBook (ansible located inside TripNBook)
+  hosts: local
+  become: yes
+  vars:
+    # If ansible is inside the project, project_root resolves to the parent dir of playbook_dir
+    project_root: "{{ playbook_dir }}/.."
+    backend_dir: "{{ project_root }}/backend"
+    frontend_dir: "{{ project_root }}/frontend"
+    apt_packages:
+      - nodejs
+      - npm
+      - git
+      - python3-pip
+
+  tasks:
+
+    - name: Normalize project_root path (make '..' explicit)
+      set_fact:
+        project_root: "{{ project_root | realpath }}"
+      tags: [all]
+
+    - name: Ensure apt cache is up to date
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      tags: [all]
+
+    - name: Install apt packages
+      apt:
+        name: "{{ apt_packages }}"
+        state: present
+      tags: [install, all]
+
+    - name: Ensure project root exists
+      stat:
+        path: "{{ project_root }}"
+      register: project_root_stat
+      tags: [all]
+
+    - name: Fail if project_root doesn't exist
+      fail:
+        msg: "project_root {{ project_root }} does not exist. Adjust project_root variable or ensure files are copied."
+      when: not project_root_stat.stat.exists
+      tags: [all]
+
+    - name: Check backend package.json
+      stat:
+        path: "{{ backend_dir }}/package.json"
+      register: backend_pkg
+      tags: [all]
+
+    - name: Check frontend package.json
+      stat:
+        path: "{{ frontend_dir }}/package.json"
+      register: frontend_pkg
+      tags: [all]
+
+    - name: Install backend npm deps (if backend exists)
+      command: npm install
+      args:
+        chdir: "{{ backend_dir }}"
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when: backend_pkg.stat.exists
+      tags: [install, all]
+
+    - name: Install frontend npm deps (if frontend exists)
+      command: npm install
+      args:
+        chdir: "{{ frontend_dir }}"
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when: frontend_pkg.stat.exists
+      tags: [install, all]
+
+    - name: Check whether frontend has a build script
+      shell: >
+        node -e "try{console.log(Boolean(require('./package.json').scripts && require('./package.json').scripts.build))}catch(e){console.log(false)}"
+      args:
+        chdir: "{{ frontend_dir }}"
+      register: frontend_has_build
+      changed_when: false
+      failed_when: false
+      when: frontend_pkg.stat.exists
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      tags: [all]
+
+    - name: Build frontend (if it has a build script)
+      command: npm run build
+      args:
+        chdir: "{{ frontend_dir }}"
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when:
+        - frontend_pkg.stat.exists
+        - frontend_has_build.stdout | lower == 'true'
+      tags: [build, all]
+
+    - name: Check if pm2 is installed
+      command: pm2 -v
+      register: pm2_check
+      failed_when: false
+      changed_when: false
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      tags: [install, all]
+
+    - name: Install pm2 globally if missing
+      command: npm install -g pm2
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when: pm2_check.rc != 0
+      tags: [install, all]
+
+    - name: Check whether backend package.json has a start script
+      shell: >
+        node -e "try{console.log(Boolean(require('./package.json').scripts && require('./package.json').scripts.start))}catch(e){console.log(false)}"
+      args:
+        chdir: "{{ backend_dir }}"
+      register: backend_has_start
+      changed_when: false
+      failed_when: false
+      when: backend_pkg.stat.exists
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      tags: [all]
+
+    - name: Start backend with pm2 using npm start (if start script exists)
+      shell: pm2 start npm --name tripnbook-backend -- start --watch || pm2 restart tripnbook-backend
+      args:
+        chdir: "{{ backend_dir }}"
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when:
+        - backend_pkg.stat.exists
+        - backend_has_start.stdout | lower == 'true'
+      tags: [start, all]
+
+    - name: Start backend with pm2 using server.js (fallback if no start script)
+      shell: |
+        if [ -f "{{ backend_dir }}/server.js" ]; then
+          pm2 start "{{ backend_dir }}/server.js" --name tripnbook-backend --watch || pm2 restart tripnbook-backend
+        elif [ -f "{{ backend_dir }}/app.js" ]; then
+          pm2 start "{{ backend_dir }}/app.js" --name tripnbook-backend --watch || pm2 restart tripnbook-backend
+        else
+          echo "No server.js or app.js found; skipping pm2 start"
+        fi
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when:
+        - backend_pkg.stat.exists
+        - backend_has_start.stdout | lower != 'true'
+      tags: [start, all]
+
+    - name: Check whether frontend package.json has a start script
+      shell: >
+        node -e "try{console.log(Boolean(require('./package.json').scripts && require('./package.json').scripts.start))}catch(e){console.log(false)}"
+      args:
+        chdir: "{{ frontend_dir }}"
+      register: frontend_has_start
+      changed_when: false
+      failed_when: false
+      when: frontend_pkg.stat.exists
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      tags: [all]
+
+    - name: Ensure 'serve' is installed globally (for static build)
+      command: npm list -g serve
+      register: serve_check
+      failed_when: false
+      changed_when: false
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      tags: [install, all]
+
+    - name: Install 'serve' globally if missing
+      command: npm install -g serve
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when: serve_check.rc != 0
+      tags: [install, all]
+
+    - name: Start frontend with pm2 using npm start (if start script exists)
+      shell: pm2 start npm --name tripnbook-frontend -- start --watch || pm2 restart tripnbook-frontend
+      args:
+        chdir: "{{ frontend_dir }}"
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when:
+        - frontend_pkg.stat.exists
+        - frontend_has_start.stdout | lower == 'true'
+      tags: [start_frontend, start, all]
+
+    - name: Start frontend with pm2 using serve (fallback if no start script)
+      shell: |
+        if [ -d "{{ frontend_dir }}/build" ]; then
+          pm2 start "serve -s {{ frontend_dir }}/build -l 3000" --name tripnbook-frontend || pm2 restart tripnbook-frontend
+        else
+          echo "No build directory found; skipping frontend serve"
+        fi
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when:
+        - frontend_pkg.stat.exists
+        - frontend_has_start.stdout | lower != 'true'
+      tags: [start_frontend, start, all]
+
+    - name: Save pm2 process list (for resurrect)
+      shell: pm2 save
+      environment:
+        HOME: "{{ ansible_env.HOME | default('/root') }}"
+      when: backend_pkg.stat.exists or frontend_pkg.stat.exists
+      tags: [start, all]
+
+    - name: Ensure ownership of project files (root)
+      file:
+        path: "{{ project_root }}"
+        owner: root
+        group: root
+        recurse: yes
+      when: project_root_stat.stat.exists
+      tags: [all]

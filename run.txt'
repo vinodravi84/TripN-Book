@@ -1,0 +1,16 @@
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y software-properties-common
+sudo add-apt-repository --yes --update ppa:ansible/ansible
+sudo apt install -y ansible git python3-pip
+
+
+ cp -r "/mnt/c/Users/Vinod Ravi/Downloads/TripN-Book-main (6)/TripN-Book-main" ~
+/TripNBook
+
+sudo apt install nodejs npm -y
+node -v
+npm -v
+
+
+cd /root/TripNBook/ansible
+ansible-playbook -i inventory deploy.yml --connection=local --become --check
