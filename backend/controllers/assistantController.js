@@ -91,6 +91,14 @@ function formatFlightsShort(list) {
     .join('\n\n');
 }
 
+function formatHotelsShort(list) {
+  if (!Array.isArray(list) || list.length === 0) return 'No hotels found.';
+  return list
+    .slice(0, 8)
+    .map((h, i) => `${i + 1}. 🏨 ${h.name || 'Unknown'}\n   📍 ${h.location || 'N/A'}\n   ⭐ ${h.rating || 'N/A'} stars — ₹${h.price || 'N/A'}/night — id:${h._id || 'n/a'}`)
+    .join('\n\n');
+}
+
 function titleCase(s) { 
   if (!s) return s; 
   return s.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' '); 
