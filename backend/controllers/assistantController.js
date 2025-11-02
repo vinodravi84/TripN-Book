@@ -522,7 +522,7 @@ const chatWithAssistant = async (req, res) => {
 
     // reset
     if (/^(reset|start over|clear chat)/i.test(lower)) {
-      sessions.delete(session.id);
+      await deleteSession(session.id);
       const reply = 'All set — I cleared the session. Ready when you are!';
       return res.json({ reply, sessionId: session.id });
     }
