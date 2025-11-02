@@ -76,19 +76,34 @@ exports.getBookings = async (req, res) => {
  * GET /api/bookings/booked-seats/:flightId
  * Returns unique booked seat IDs for a flight.
  */
+// GET /api/bookings/booked-seats/:flightId
+// Returns unique booked seat IDs for a flight on a specific date (and class)
 exports.getBookedSeats = async (req, res) => {
   try {
     const { flightId } = req.params;
-    const { travelClass } = req.query; // optional
+    // accept date via ?date=YYYY-MM-DD or ?travelDate=...
+    const dateStr = req.query.date || req.query.travelDate || null;
+    const travelClass = req.query.travelClass || null;
 
     if (!flightId) return res.status(400).json({ message: 'Flight ID required' });
 
+    // base query for this flight
     const query = { item: flightId, type: 'flight' };
+
+    // if travelClass provided, only consider that class (Economy / Business etc)
     if (travelClass) query.travelClass = travelClass;
+
+    // if a date string provided, match bookings whose travelDate falls on that date
+    if (dateStr) {
+      const dayStart = new Date(dateStr + 'T00:00:00.000Z');
+      const nextDay = new Date(dayStart);
+      nextDay.setUTCDate(dayStart.getUTCDate() + 1);
+      query.travelDate = { $gte: dayStart, $lt: nextDay };
+    }
 
     const bookings = await Booking.find(query).select('selectedSeats').lean();
 
-    const bookedSeats = Array.from(new Set(flatten(bookings.map(b => b.selectedSeats || []))));
+    const bookedSeats = Array.from(new Set((bookings || []).flatMap(b => b.selectedSeats || [])));
 
     return res.status(200).json({ success: true, bookedSeats });
   } catch (err) {
@@ -96,6 +111,7 @@ exports.getBookedSeats = async (req, res) => {
     return res.status(500).json({ message: 'Server error fetching booked seats' });
   }
 };
+
 
 /**
  * POST /api/bookings
@@ -154,7 +170,22 @@ exports.createBooking = async (req, res) => {
         ? totalAmount
         : ((flightDoc.price || 0) * Math.max(1, sanitizedPassengers.length));
 
-      const existingBookings = await Booking.find({ item }).select('selectedSeats').lean();
+      // --- Build query to find existing bookings for the SAME flight + date (+ class) ---
+      const seatQuery = { item, type: 'flight' };
+      if (travelClass) {
+        seatQuery.travelClass = travelClass;
+      }
+      if (travelDate) {
+        // Accept travelDate as "YYYY-MM-DD" or ISO; normalize to UTC day-range
+        const dayStart = (typeof travelDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(travelDate))
+          ? new Date(travelDate + 'T00:00:00.000Z')
+          : new Date(travelDate);
+        const nextDay = new Date(dayStart);
+        nextDay.setUTCDate(dayStart.getUTCDate() + 1);
+        seatQuery.travelDate = { $gte: dayStart, $lt: nextDay };
+      }
+
+      const existingBookings = await Booking.find(seatQuery).select('selectedSeats').lean();
       const existingSeats = flatten(existingBookings.map(b => b.selectedSeats || []));
 
       const conflicts = (selectedSeats || []).filter(s => existingSeats.includes(s));

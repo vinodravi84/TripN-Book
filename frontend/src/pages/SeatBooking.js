@@ -1,3 +1,4 @@
+// src/pages/SeatBooking.js
 import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api, { setAuthToken } from '../services/api';
@@ -13,6 +14,23 @@ import aircraftImage from '../styles/assets/aircraft-topview.png';
  * - Confirm pushes to /payment with updated booking draft
  */
 
+const toIsoDateOnly = (d) => {
+  if (!d) return null;
+  // Accept either "YYYY-MM-DD" or ISO string. Return "YYYY-MM-DD".
+  try {
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return null;
+    // build YYYY-MM-DD in UTC to match backend expectation
+    const yyyy = dt.getUTCFullYear();
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getUTCDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  } catch (e) {
+    return null;
+  }
+};
+
 const SeatBooking = () => {
   const { state } = useLocation();
   const navigate = useNavigate();
@@ -27,7 +45,7 @@ const SeatBooking = () => {
     booking // optional draft
   } = state || {};
 
-  const seatCountNeeded = passengerData.length || 1;
+  const seatCountNeeded = (Array.isArray(passengerData) && passengerData.length) ? passengerData.length : 1;
 
   const [selectedSeats, setSelectedSeats] = useState(preAssignedSeats || []);
   const [bookedSeats, setBookedSeats] = useState([]);
@@ -39,13 +57,57 @@ const SeatBooking = () => {
     if (token) setAuthToken(token);
   }, []);
 
+  // Determine the calendar date we should query for booked seats.
+  // Priority: explicit departureDate from route -> booking.travelDate -> bookingDraft in localStorage
+  const resolveQueryDate = () => {
+    // 1) route-provided departureDate
+    if (departureDate) {
+      const iso = toIsoDateOnly(departureDate);
+      if (iso) return iso;
+    }
+    // 2) booking object passed in state (booking.travelDate)
+    if (booking && booking.travelDate) {
+      const iso = toIsoDateOnly(booking.travelDate);
+      if (iso) return iso;
+    }
+    // 3) draft in localStorage (legacy flow)
+    try {
+      const stored = localStorage.getItem('bookingDraft');
+      if (stored) {
+        const draft = JSON.parse(stored);
+        if (draft?.departureDate) {
+          const iso = toIsoDateOnly(draft.departureDate);
+          if (iso) return iso;
+        }
+        if (draft?.travelDate) {
+          const iso = toIsoDateOnly(draft.travelDate);
+          if (iso) return iso;
+        }
+      }
+    } catch (e) {
+      // ignore parse error
+    }
+    return null;
+  };
+
   useEffect(() => {
     const fetchBookedSeats = async () => {
       if (!flight?._id) return;
       setLoadingBooked(true);
       setBookedError('');
       try {
-        const res = await api.get(`/bookings/booked-seats/${flight._id}?travelClass=${encodeURIComponent(travelClass)}`);
+        const dateToQuery = resolveQueryDate();
+
+        // if no date resolved, warn and query nothing — avoids showing seats from other dates
+        if (!dateToQuery) {
+          setBookedSeats([]); // assume none booked (or you may choose to disable selection)
+          setBookedError('No travel date selected. Seat availability is shown only after selecting a date.');
+          setLoadingBooked(false);
+          return;
+        }
+
+        // include travelClass and travelDate in the request so backend filters correctly
+        const res = await api.get(`/bookings/booked-seats/${flight._id}?travelClass=${encodeURIComponent(travelClass)}&travelDate=${encodeURIComponent(dateToQuery)}`);
         const seats = res.data?.bookedSeats || [];
         setBookedSeats(Array.isArray(seats) ? seats : []);
       } catch (err) {
@@ -56,8 +118,9 @@ const SeatBooking = () => {
       }
     };
     fetchBookedSeats();
+    // re-run when flight, travelClass, or the resolved date changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flight?._id, travelClass]);
+  }, [flight?._id, travelClass, departureDate, booking]);
 
   if (!flight) return <div className="seat-error">No flight data provided.</div>;
 
@@ -112,11 +175,15 @@ const SeatBooking = () => {
         passengerData,
         travelClass,
         selectedSeats,
-        departureDate
+        departureDate: departureDate || toIsoDateOnly(booking?.travelDate) || undefined,
+        travelDate: departureDate || toIsoDateOnly(booking?.travelDate) || undefined,
       };
     } else {
       draft.selectedSeats = selectedSeats;
       draft.passengerData = passengerData;
+      // ensure both legacy keys are present
+      draft.departureDate = draft.departureDate || departureDate || toIsoDateOnly(draft.travelDate) || draft.departureDate;
+      draft.travelDate = draft.travelDate || departureDate || toIsoDateOnly(draft.departureDate) || draft.travelDate;
     }
     localStorage.setItem('bookingDraft', JSON.stringify(draft));
     navigate('/payment', { state: { booking: draft } });
@@ -150,6 +217,7 @@ const SeatBooking = () => {
           {[...Array(rowCount)].map((_, rowIdx) => (
             <div key={`row-${rowIdx}`} className="seat-row">
               {cols.map((col, colIdx) => {
+                // col is expected to be the seat letter or label (e.g., 'A', 'B', 'C')
                 const seatId = `${selectedClassKey[0].toUpperCase()}${rowIdx + 1}${col}`;
                 const isSelected = selectedSeats.includes(seatId) || preAssignedSet.has(seatId);
                 const isBooked = bookedSeats.includes(seatId);
@@ -194,10 +262,7 @@ const SeatBooking = () => {
 
       <div style={{ marginTop: 12 }}>
         <button onClick={handleConfirm} className="confirm-btn">Confirm Seats</button>
-        <button onClick={() => {
-          // go back to passenger form to change preferences
-          navigate(-1);
-        }} style={{ marginLeft: 12 }}>Back</button>
+        <button onClick={() => { navigate(-1); }} style={{ marginLeft: 12 }}>Back</button>
       </div>
     </div>
   );
