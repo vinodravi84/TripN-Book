@@ -130,35 +130,57 @@ const SeatBooking = () => {
     }
   }, [selectedClassKey, bookedSeats, preAssignedSet, selectedSeats, seatCountNeeded]);
 
-  const handleConfirm = () => {
+  const handleConfirm = useCallback(async () => {
     // If preAssigned seats exist and equals passengers, accept them even if not changed
     const totalSelected = selectedSeats.length;
     if (totalSelected !== seatCountNeeded) {
-      alert(`Please select ${seatCountNeeded} seats. You currently selected ${totalSelected}.`);
+      // Show animated warning for insufficient seats
+      const seatElements = document.querySelectorAll('.seat');
+      seatElements.forEach(el => {
+        if (!selectedSeats.includes(el.dataset.seatId) && !bookedSeats.includes(el.dataset.seatId)) {
+          el.classList.add('seat-warning-pulse');
+          setTimeout(() => {
+            el.classList.remove('seat-warning-pulse');
+          }, 1000);
+        }
+      });
       return;
     }
 
-    // Attach seats to booking draft and go to payment
-    const draftFromStorage = localStorage.getItem('bookingDraft');
-    let draft = booking || (draftFromStorage ? JSON.parse(draftFromStorage) : null);
-    if (!draft) {
-      // build minimal draft
-      draft = {
-        flight,
-        passengerData,
-        travelClass,
-        selectedSeats,
-        departureDate,
-        travelDate: departureDate // Ensure travelDate is included for backend validation
-      };
-    } else {
-      draft.selectedSeats = selectedSeats;
-      draft.passengerData = passengerData;
-      draft.travelDate = departureDate; // Ensure travelDate is included
+    setConfirming(true);
+
+    try {
+      // Attach seats to booking draft and go to payment
+      const draftFromStorage = localStorage.getItem('bookingDraft');
+      let draft = booking || (draftFromStorage ? JSON.parse(draftFromStorage) : null);
+      if (!draft) {
+        // build minimal draft
+        draft = {
+          flight,
+          passengerData,
+          travelClass,
+          selectedSeats,
+          departureDate,
+          travelDate: departureDate // Ensure travelDate is included for backend validation
+        };
+      } else {
+        draft.selectedSeats = selectedSeats;
+        draft.passengerData = passengerData;
+        draft.travelDate = departureDate; // Ensure travelDate is included
+      }
+      localStorage.setItem('bookingDraft', JSON.stringify(draft));
+
+      // Simulate brief loading state for better UX
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      navigate('/payment', { state: { booking: draft } });
+    } catch (error) {
+      console.error('Error confirming seats:', error);
+      setBookedError('Failed to confirm seats. Please try again.');
+    } finally {
+      setConfirming(false);
     }
-    localStorage.setItem('bookingDraft', JSON.stringify(draft));
-    navigate('/payment', { state: { booking: draft } });
-  };
+  }, [selectedSeats, seatCountNeeded, bookedSeats, flight, passengerData, travelClass, departureDate, booking, navigate]);
 
   return (
     <div className="seat-booking-container">
