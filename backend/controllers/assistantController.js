@@ -507,7 +507,8 @@ const chatWithAssistant = async (req, res) => {
     const { message, sessionId: incomingSessionId } = req.body || {};
     if (!message) return res.status(400).json({ error: 'message required' });
 
-    const session = ensureSession(incomingSessionId);
+    const userId = req.user?._id || req.user?.id || null;
+    const session = await ensureSession(incomingSessionId, userId);
     const msg = (message || '').trim();
     const lower = msg.toLowerCase();
     session.history.push({ role: 'user', content: msg });
