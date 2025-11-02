@@ -678,7 +678,7 @@ const chatWithAssistant = async (req, res) => {
         };
 
         // PERSIST SESSION
-        sessions.set(session.id, session);
+        await saveSession(session);
 
         const reply = `Great — I'll collect details for ${count} passenger(s). Let's start with passenger #1: please provide the full name.`;
         session.history.push({ role: 'assistant', content: reply });
