@@ -1103,6 +1103,161 @@ const chatWithAssistant = async (req, res) => {
       }
     }
 
+    // ---------- Hotel Search Logic ----------
+    if (detectHotelIntent(msg) && !session.bookingDraft) {
+      try {
+        // Extract location, dates, and filters from the message
+        const locationMatch = msg.match(/(?:hotel|stay|accommodation|lodging|resort|room)\s+(?:in|at)\s+([A-Za-z\s]+?)(?:\b|$)/i);
+        const location = locationMatch ? locationMatch[1].trim() : null;
+
+        if (!location) {
+          const reply = "I can help you find hotels! Please tell me the location (e.g., 'Hotels in Mumbai', 'Find a hotel in Delhi for this weekend').";
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id });
+        }
+
+        // Extract dates
+        const checkInDate = parseDateFromText(msg) || null;
+        const checkOutDate = parseDateFromText(msg.replace(/this weekend|next weekend|tomorrow|today/i, (match) => {
+          if (match === 'this weekend') {
+            const today = new Date();
+            const saturday = new Date(today);
+            saturday.setDate(today.getDate() + (6 - today.getDay()) % 7);
+            return saturday.toISOString().slice(0, 10);
+          }
+          if (match === 'next weekend') {
+            const today = new Date();
+            const saturday = new Date(today);
+            saturday.setDate(today.getDate() + (6 - today.getDay()) % 7 + 7);
+            return saturday.toISOString().slice(0, 10);
+          }
+          if (match === 'tomorrow') {
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            return tomorrow.toISOString().slice(0, 10);
+          }
+          if (match === 'today') {
+            return new Date().toISOString().slice(0, 10);
+          }
+          return match;
+        }));
+
+        // Default to 1 night stay if only check-in is specified
+        const finalCheckIn = checkInDate || new Date().toISOString().slice(0, 10);
+        const finalCheckOut = checkOutDate || new Date(new Date(finalCheckIn).getTime() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+        // Extract filters
+        const filters = extractHotelFilters(msg);
+
+        // Extract guest count (default to 1)
+        const guestCount = extractPassengerCount(msg) || 1;
+
+        // Search hotels
+        const hotels = await searchHotels(location, finalCheckIn, finalCheckOut, guestCount, filters);
+
+        if (!hotels.length) {
+          const reply = `I couldn't find any hotels in ${location} for those dates. Want me to try different dates or a nearby location?`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id });
+        }
+
+        // Store search results in session context
+        session.context = {
+          ...session.context,
+          hotelSearchLocation: location,
+          hotelCheckIn: finalCheckIn,
+          hotelCheckOut: finalCheckOut,
+          hotelGuests: guestCount,
+          hotelFilters: filters
+        };
+        session.lastSearchResults = hotels;
+        session.selectedFlight = null; // Clear any flight selection
+        session.bookingDraft = null;
+
+        const reply = `Found ${hotels.length} hotels in ${location} for ${finalCheckIn}${finalCheckOut !== finalCheckIn ? ' to ' + finalCheckOut : ''}:\n\n${formatHotelsShort(hotels)}\n\nReply with the number to select a hotel, or say 'book hotel #' followed by the number to proceed.`;
+        session.history.push({ role: 'assistant', content: reply });
+        await saveSession(session);
+        return res.json({ reply, sessionId: session.id, resultsCount: hotels.length });
+
+      } catch (error) {
+        console.error('Hotel search error:', error);
+        const reply = "I encountered an error while searching for hotels. Please try again with different search criteria.";
+        session.history.push({ role: 'assistant', content: reply });
+        return res.json({ reply, sessionId: session.id });
+      }
+    }
+
+    // Handle hotel selection and booking
+    if (session.lastSearchResults.length > 0 && session.lastSearchResults[0].name && !session.bookingDraft) {
+      const selectedHotelMatch = msg.match(/(?:book|select|choose)\s+hotel\s*#?(\d+)/i);
+      const hotelNumberMatch = msg.match(/^(\d+)$/);
+
+      if (selectedHotelMatch || hotelNumberMatch) {
+        const hotelIndex = parseInt((selectedHotelMatch || hotelNumberMatch)[1], 10) - 1;
+        const selectedHotel = session.lastSearchResults[hotelIndex];
+
+        if (selectedHotel) {
+          if (req.user && req.user._id) {
+            try {
+              const booking = await createHotelBooking(
+                req.user._id,
+                selectedHotel._id,
+                session.context.hotelCheckIn,
+                session.context.hotelCheckOut,
+                session.context.hotelGuests || 1
+              );
+
+              const nights = Math.ceil((new Date(session.context.hotelCheckOut) - new Date(session.context.hotelCheckIn)) / (1000 * 60 * 60 * 24));
+              const reply = `🎉 Hotel booked successfully!\n\n📍 **${selectedHotel.name}** in ${selectedHotel.location}\n📅 ${session.context.hotelCheckIn} to ${session.context.hotelCheckOut} (${nights} nights)\n👥 ${session.context.hotelGuests || 1} guest(s)\n💰 Total: ₹${booking.totalAmount}\n\nRedirecting to payment...`;
+
+              session.history.push({ role: 'assistant', content: reply });
+              await saveSession(session);
+
+              const navData = { path: '/payment', state: { booking: booking.toObject() } };
+              return res.json({ reply, navigateTo: navData, sessionId: session.id, booking });
+            } catch (error) {
+              console.error('Hotel booking error:', error);
+              const reply = "I encountered an error while booking the hotel. Please try again.";
+              session.history.push({ role: 'assistant', content: reply });
+              return res.json({ reply, sessionId: session.id });
+            }
+          } else {
+            // Not logged in - create booking draft
+            const nights = Math.ceil((new Date(session.context.hotelCheckOut) - new Date(session.context.hotelCheckIn)) / (1000 * 60 * 60 * 24));
+            const totalPrice = (selectedHotel.price || 0) * nights;
+
+            const bookingDraft = {
+              type: 'hotel',
+              hotel: selectedHotel,
+              checkIn: session.context.hotelCheckIn,
+              checkOut: session.context.hotelCheckOut,
+              guests: session.context.hotelGuests || 1,
+              nights,
+              totalAmount: totalPrice,
+              readyForPayment: true,
+              metadata: {
+                hotelId: selectedHotel._id,
+                location: selectedHotel.location
+              }
+            };
+
+            session.bookingDraft = bookingDraft;
+            await saveSession(session);
+
+            const reply = `🎉 Hotel selected!\n\n📍 **${selectedHotel.name}** in ${selectedHotel.location}\n📅 ${session.context.hotelCheckIn} to ${session.context.hotelCheckOut} (${nights} nights)\n👥 ${session.context.hotelGuests || 1} guest(s)\n💰 Total: ₹${totalPrice}\n\nPlease log in to complete the booking.`;
+
+            session.history.push({ role: 'assistant', content: reply });
+            const navData = { path: '/payment', state: { booking: bookingDraft } };
+            return res.json({ reply, navigateTo: navData, sessionId: session.id, bookingDraft: bookingDraft });
+          }
+        } else {
+          const reply = `I couldn't find that hotel number. Please choose from the list:\n\n${formatHotelsShort(session.lastSearchResults)}`;
+          session.history.push({ role: 'assistant', content: reply });
+          return res.json({ reply, sessionId: session.id });
+        }
+      }
+    }
+
     // parse flight search
     const date = parseDateFromText(msg);
     let from = session.context.fromCity || null;
