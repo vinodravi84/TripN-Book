@@ -510,6 +510,107 @@ async function callLLMForHelp(systemPrompt, userText, context = {}) {
   }
 }
 
+// ---------- Hotel Booking Functions ----------
+async function searchHotels(location, checkIn, checkOut, guests = 1, filters = {}) {
+  try {
+    const query = {
+      location: new RegExp(location, 'i'),
+      'availability.from': { $lte: new Date(checkIn) },
+      'availability.to': { $gte: new Date(checkOut) }
+    };
+
+    // Apply filters
+    if (filters.minRating) query.rating = { $gte: filters.minRating };
+    if (filters.maxPrice) query.price = { $lte: filters.maxPrice };
+    if (filters.amenities && filters.amenities.length > 0) {
+      query.amenities = { $in: filters.amenities };
+    }
+
+    const hotels = await Hotel.find(query).lean();
+
+    // Sort by rating and price balance
+    return hotels.sort((a, b) => {
+      const scoreA = (a.rating || 0) * 100 - (a.price || 999999);
+      const scoreB = (b.rating || 0) * 100 - (b.price || 999999);
+      return scoreB - scoreA;
+    });
+  } catch (error) {
+    console.error('Hotel search error:', error);
+    return [];
+  }
+}
+
+function detectHotelIntent(text) {
+  const lower = text.toLowerCase();
+  const hotelKeywords = /\b(hotel|stay|accommodation|lodging|resort|room)\b/i;
+  const bookingKeywords = /\b(book|reserve|find|search|looking for|need)\b/i;
+
+  return hotelKeywords.test(lower) && bookingKeywords.test(lower);
+}
+
+function extractHotelFilters(text) {
+  const lower = text.toLowerCase();
+  const filters = {};
+
+  // Rating filter: "4 star hotel", "minimum 3 stars"
+  const ratingMatch = lower.match(/(\d+)\s*star/i);
+  if (ratingMatch) {
+    filters.minRating = parseInt(ratingMatch[1]);
+  }
+
+  // Price filter: "under 3000", "below 5000", "cheap hotel"
+  const priceMatch = lower.match(/(?:under|below|less than|cheap)\s*₹?\s*([0-9,]+)/i);
+  if (priceMatch) {
+    filters.maxPrice = parseInt(priceMatch[1].replace(',', ''));
+  }
+
+  // Amenities: "with wifi", "pool", "gym", "breakfast included"
+  const amenities = [];
+  if (/\b(wifi|internet)\b/i.test(lower)) amenities.push('WiFi');
+  if (/\b(pool|swimming)\b/i.test(lower)) amenities.push('Pool');
+  if (/\b(gym|fitness)\b/i.test(lower)) amenities.push('Gym');
+  if (/\b(breakfast)\b/i.test(lower)) amenities.push('Breakfast');
+  if (/\b(parking)\b/i.test(lower)) amenities.push('Parking');
+
+  if (amenities.length > 0) {
+    filters.amenities = amenities;
+  }
+
+  return filters;
+}
+
+async function createHotelBooking(userId, hotelId, checkIn, checkOut, guests, roomType = 'standard') {
+  try {
+    const hotel = await Hotel.findById(hotelId).lean();
+    if (!hotel) throw new Error('Hotel not found');
+
+    const nights = Math.ceil((new Date(checkOut) - new Date(checkIn)) / (1000 * 60 * 60 * 24));
+    const totalPrice = (hotel.price || 0) * nights;
+
+    const booking = new Booking({
+      type: 'hotel',
+      user: userId,
+      item: hotelId,
+      passengerData: [], // Hotels don't typically need passenger details
+      totalAmount: totalPrice,
+      paymentStatus: 'Pending',
+      travelDate: new Date(checkIn),
+      metadata: {
+        checkIn: new Date(checkIn),
+        checkOut: new Date(checkOut),
+        guests,
+        roomType,
+        nights
+      }
+    });
+
+    return await booking.save();
+  } catch (error) {
+    console.error('Hotel booking error:', error);
+    throw error;
+  }
+}
+
 // ---------- Main Chat Handler ----------
 const chatWithAssistant = async (req, res) => {
   try {
