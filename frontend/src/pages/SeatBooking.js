@@ -95,7 +95,38 @@ const SeatBooking = () => {
   const rowCount = Math.ceil(totalSeats / seatsPerRow);
 
   // helper to determine if this seat is pre-assigned (locked)
-  const preAssignedSet = new Set(preAssignedSeats || []);
+  const preAssignedSet = useMemo(() => new Set(preAssignedSeats || []), [preAssignedSeats]);
+
+  // Enhanced seat information
+  const getSeatInfo = useCallback((seatId) => {
+    const isSelected = selectedSeats.includes(seatId) || preAssignedSet.has(seatId);
+    const isBooked = bookedSeats.includes(seatId);
+    const isLocked = preAssignedSet.has(seatId);
+    const isHovered = hoveredSeat === seatId;
+    const isAnimating = animatingSeats.has(seatId);
+
+    // Determine seat type (window, aisle, middle)
+    const seatLetter = seatId.charAt(seatId.length - 1);
+    const seatType = ['A', 'F'].includes(seatLetter) ? 'window' :
+                    ['C', 'D'].includes(seatLetter) ? 'aisle' : 'middle';
+
+    // Get passenger name if pre-assigned
+    const passengerIndex = preAssignedSeats.indexOf(seatId);
+    const passengerName = passengerIndex >= 0 && passengerData[passengerIndex]
+      ? passengerData[passengerIndex].fullName
+      : null;
+
+    return {
+      isSelected,
+      isBooked,
+      isLocked,
+      isHovered,
+      isAnimating,
+      seatType,
+      passengerName,
+      canSelect: !isBooked && !isLocked && !isSelected
+    };
+  }, [selectedSeats, preAssignedSet, bookedSeats, hoveredSeat, animatingSeats, preAssignedSeats, passengerData]);
 
   const toggleSeat = useCallback((seatId, classKey) => {
     if (classKey !== selectedClassKey) return;
