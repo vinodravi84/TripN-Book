@@ -1,7 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api, { setAuthToken } from '../services/api';
 import { aircraftLayouts } from '../utils/aircraftLayouts';
+import LoadingSpinner, { SeatMapLoader } from '../components/LoadingSpinner';
+import { SeatBookingErrorBoundary } from '../components/ErrorBoundary';
 import '../styles/SeatBooking.css';
 import aircraftImage from '../styles/assets/aircraft-topview.png';
 
