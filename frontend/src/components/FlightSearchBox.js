@@ -40,7 +40,7 @@ const FlightSearchBox = () => {
       return;
     }
     try {
-      const res = await fetch(`http://localhost:5000/api/cities?q=${query}`);
+      const res = await fetch(`https://tripnbook.onrender.com/api/cities?q=${query}`);
       setSuggestions(await res.json() || []);
     } catch (e) {
       console.error(e);
@@ -118,7 +118,7 @@ const FlightSearchBox = () => {
 
     try {
       const res = await fetch(
-        `http://localhost:5000/api/flights?fromCity=${fromCode}&toCity=${toCode}` +
+        `https://tripnbook.onrender.com/api/flights?fromCity=${fromCode}&toCity=${toCode}` +
         `&departureDate=${departureDate}` +
         `${tripType === 'round' ? `&returnDate=${returnDate}` : ''}`
       );
