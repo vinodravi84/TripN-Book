@@ -207,7 +207,12 @@ const SeatBooking = () => {
     } finally {
       setConfirming(false);
     }
-  }, [selectedSeats, seatCountNeeded, bookedSeats, flight, passengerData, travelClass, departureDate, booking, navigate]);
+  }, [selectedSeats, seatCountNeeded, bookedSeats, flight, passengerData, travelClass, departureDate, booking, navigate, selectedClassKey]);
+
+  // Conditional returns come after all hooks
+  if (!flight) return <div className="seat-error">No flight data provided.</div>;
+  if (!layoutForModel) return <div className="seat-error">Seat layout not available for: {model}</div>;
+  if (!selectedLayout) return <div className="seat-error">{travelClass} class not available for this aircraft.</div>;
 
   return (
     <SeatBookingErrorBoundary>
