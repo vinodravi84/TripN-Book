@@ -45,7 +45,15 @@ const SeatBooking = () => {
       setLoadingBooked(true);
       setBookedError('');
       try {
-        const res = await api.get(`/bookings/booked-seats/${flight._id}?travelClass=${encodeURIComponent(travelClass)}`);
+        let apiUrl = `/bookings/booked-seats/${flight._id}?travelClass=${encodeURIComponent(travelClass)}`;
+
+        // Add travelDate parameter if available
+        if (departureDate) {
+          const formattedDate = new Date(departureDate).toISOString().split('T')[0];
+          apiUrl += `&travelDate=${encodeURIComponent(formattedDate)}`;
+        }
+
+        const res = await api.get(apiUrl);
         const seats = res.data?.bookedSeats || [];
         setBookedSeats(Array.isArray(seats) ? seats : []);
       } catch (err) {
@@ -57,7 +65,7 @@ const SeatBooking = () => {
     };
     fetchBookedSeats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flight?._id, travelClass]);
+  }, [flight?._id, travelClass, departureDate]);
 
   if (!flight) return <div className="seat-error">No flight data provided.</div>;
 
