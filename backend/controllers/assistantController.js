@@ -1056,9 +1056,11 @@ const confirmPaymentAndCreateBooking = async (req, res) => {
   try {
     const { sessionId, paymentResult } = req.body || {};
     if (!sessionId || !paymentResult) return res.status(400).json({ error: 'sessionId and paymentResult required' });
-    const session = sessions.get(sessionId);
-    if (!session?.bookingDraft) return res.status(400).json({ error: 'No booking draft for session' });
-    const draft = session.bookingDraft;
+
+    // Find session in database
+    const dbSession = await Session.findOne({ sessionId: sessionId });
+    if (!dbSession?.bookingDraft) return res.status(400).json({ error: 'No booking draft for session' });
+    const draft = dbSession.bookingDraft;
 
     // If a booking exists in DB already, update it.
     if (draft.bookingId) {
