@@ -11,7 +11,7 @@ const fs = require('fs');
 const Flight = require('../models/Flight');
 const Booking = require('../models/Booking');
 
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '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';
+const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || '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';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL_NAME = process.env.OPENROUTER_MODEL || 'gpt-4o-mini';
 
